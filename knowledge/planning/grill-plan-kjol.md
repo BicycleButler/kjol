@@ -1,27 +1,26 @@
 # Kjol Two-Agent Grill Plan (v2.5.5)
 
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-|--------|-------------|-------------|-------|--------|
-| Kjol/main.swift | Unknown | Unknown | 3eb071fa | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| KjolHelper/SMC.swift | Unknown | Unknown | b22b541b | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/main.swift | Unknown | Unknown | b8526920 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| KjolHelper/KjolHelperProtocol.swift | Unknown | Unknown | 388367c7 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/main.swift | Unknown | Unknown | b4ebf4c0 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/XpcClient.swift | Partially agree | Agree | 8c1ecc25 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/UpdateViewModel.swift | Agree | TIMEOUT | 65b61474 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/ViewModels.swift | Agree | Agree | ff49d217 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/UpdateCheckerService.swift | Unknown | Agree | f3ff6352 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/Host.swift | Agree | Agree | 3c5c3a75 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/HelperInstaller.swift | Agree | Agree | 94f8fce3 | COMPLETE |
-| Domain | Q1 Verdict | Q2 Verdict | Token | Status |
-| Kjol/CpuSamplerService.swift | Unknown | TIMEOUT | 83ce6b70 | COMPLETE |
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/main.swift | Unknown | Unknown | 3eb071fa | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- KjolHelper/SMC.swift | Unknown | Unknown | b22b541b | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/main.swift | Unknown | Unknown | b8526920 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- KjolHelper/KjolHelperProtocol.swift | Unknown | Unknown | 388367c7 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/main.swift | Unknown | Unknown | b4ebf4c0 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/XpcClient.swift | Partially agree | Agree | 8c1ecc25 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/UpdateViewModel.swift | Agree | TIMEOUT | 65b61474 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/ViewModels.swift | Agree | Agree | ff49d217 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/UpdateCheckerService.swift | Unknown | Agree | f3ff6352 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/Host.swift | Agree | Agree | 3c5c3a75 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/HelperInstaller.swift | Agree | Agree | 94f8fce3 | COMPLETE
+- Domain | Q1 Verdict | Q2 Verdict | Token | Status
+- Kjol/CpuSamplerService.swift | Unknown | TIMEOUT | 83ce6b70 | COMPLETE

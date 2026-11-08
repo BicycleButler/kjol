@@ -120,6 +120,22 @@ final class XpcClient {
         }
     }
 
+    func setDaemonSafetyCeiling(_ enabled: Bool) async throws -> Bool {
+        return try await withCheckedThrowingContinuation { continuation in
+            guard let proxy = remoteProxy(errorHandler: { error in
+                continuation.resume(throwing: error)
+            }) else { return }
+
+            proxy.setDaemonSafetyCeiling(enabled) { success, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: success)
+                }
+            }
+        }
+    }
+
     func getCombinedStatus() async throws -> [String: Any] {
         return try await withCheckedThrowingContinuation { continuation in
             guard let proxy = remoteProxy(errorHandler: { error in
@@ -163,6 +179,54 @@ final class XpcClient {
             }) else { return }
 
             proxy.setFanProfile(profile, rpmPercent: rpmPercent, targetTempC: targetTempC) { success, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: success)
+                }
+            }
+        }
+    }
+
+    func setFanAdaptiveProfile(subProfile: String, curvePoints: [Double] = []) async throws -> Bool {
+        return try await withCheckedThrowingContinuation { continuation in
+            guard let proxy = remoteProxy(errorHandler: { error in
+                continuation.resume(throwing: error)
+            }) else { return }
+
+            proxy.setFanAdaptiveProfile(subProfile: subProfile, curvePoints: curvePoints) { success, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: success)
+                }
+            }
+        }
+    }
+
+    func setThermalSafetyPolicy(policy: String, ceilingTempC: Double) async throws -> Bool {
+        return try await withCheckedThrowingContinuation { continuation in
+            guard let proxy = remoteProxy(errorHandler: { error in
+                continuation.resume(throwing: error)
+            }) else { return }
+
+            proxy.setThermalSafetyPolicy(policy: policy, ceilingTempC: ceilingTempC) { success, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: success)
+                }
+            }
+        }
+    }
+
+    func setSystemPreset(_ preset: String) async throws -> Bool {
+        return try await withCheckedThrowingContinuation { continuation in
+            guard let proxy = remoteProxy(errorHandler: { error in
+                continuation.resume(throwing: error)
+            }) else { return }
+
+            proxy.setSystemPreset(preset: preset) { success, error in
                 if let error = error {
                     continuation.resume(throwing: error)
                 } else {

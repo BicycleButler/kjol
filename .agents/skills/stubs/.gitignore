@@ -1,0 +1,6 @@
+# stubs skill artifacts and large build bundles
+dist/
+*.log
+*.sqlite
+*.sqlite*
+.DS_Store

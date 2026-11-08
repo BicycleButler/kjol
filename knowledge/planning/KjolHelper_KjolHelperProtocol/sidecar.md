@@ -24,8 +24,8 @@ status: complete
 
 **Reviewer:** The recommendation to keep the current organization is reasonable given the protocol's focused responsibility set and Swift idiomatic structure.
 **Verdict:** Agree
-**Reasoning:** KjolHelperProtocol is small and cohesive; premature splitting would add abstraction cost without a demonstrated need for independent reuse or testability gains.
-**Risk:** Future growth may eventually warrant extraction if new responsibilities accumulate and the file becomes difficult to maintain.
+**Reasoning:** KjolHelperProtocol is small and cohesive. Premature splitting would add abstraction cost without a demonstrated need for independent reuse or testability gains.
+**Risk:** Future growth can eventually warrant extraction if new responsibilities accumulate and the file becomes difficult to maintain.
 
 <!--388367c7_R_Q1_DONE-->
 <!--388367c7_GM_Q1_DONE-->
@@ -38,16 +38,16 @@ status: complete
 // See: KjolHelper/KjolHelperProtocol.swift
 ```
 
-**A)** Keep the 4-phase calibration state machine (charging100 → holding100 → discharging15 → rechargingLimit) — it's a well-established battery calibration protocol.
+**A)** Keep the 4-phase calibration state machine (charging100 → holding100 → discharging15 → rechargingLimit) — it is a well-established battery calibration protocol.
 **B)** Simplify to a 2-phase approach (charge to 100%, then discharge to 0%) — less user-friendly but simpler to maintain.
 **C)** Make calibration duration configurable by the user — allows power users to tune hold times (currently hardcoded to 60 min).
 
-**Recommendation:** A — Keep the 4-phase calibration state machine (charging100 → holding100 → discharging15 → rechargingLimit) — it's a well-established battery calibration protocol.
+**Recommendation:** A — Keep the 4-phase calibration state machine (charging100 → holding100 → discharging15 → rechargingLimit) — it is a well-established battery calibration protocol.
 
 **Reviewer:** Option A is reasonable, but ignoring configurability of hold times in option C leaves calibration poorly tunable for different battery chemistries or user needs.
 **Verdict:** Partially agree
-**Reasoning:** The 4-phase state machine is a proven pattern and should stay. However, dismissing option C entirely overlooks a real maintainability concern: hardcoded 60-minute hold times may not be optimal across all hardware generations. The right move is to keep the state machine but externalize hold durations as tunable constants.
-**Risk:** Leaving hold times hardcoded may require a larger refactor later if Apple changes SMC calibration behavior across silicon generations.
+**Reasoning:** The 4-phase state machine is a proven pattern and must stay. However, dismissing option C entirely overlooks a real maintainability concern: hardcoded 60-minute hold times can not be optimal across all hardware generations. The right move is to keep the state machine but externalize hold durations as tunable constants.
+**Risk:** Leaving hold times hardcoded can require a larger refactor later if Apple changes SMC calibration behavior across silicon generations.
 <!--388367c7_R_Q2_DONE-->
 
 <!--388367c7_GM_Q2_DONE-->

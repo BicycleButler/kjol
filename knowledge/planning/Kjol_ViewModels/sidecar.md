@@ -24,10 +24,10 @@ status: complete
 
 <!--ff49d217_GM_Q1_DONE-->
 
-**Reviewer:** Agree with keeping Task + @Published because it aligns with modern SwiftUI patterns and avoids unnecessary Combine boilerplate for a macOS Apple-Silicon target that ships with Swift Concurrency.
+**Reviewer:** Agree with keeping Task + @Published because it aligns with modern SwiftUI patterns and prevents unnecessary Combine boilerplate for a macOS Apple-Silicon target that ships with Swift Concurrency.
 **Verdict:** Agree
 **Reasoning:** The minimum deployment target is likely modern macOS where async/await and @Published are sufficient. Introducing Combine only adds surface area without clear gain here. Option C could be revisited if telemetry jitter becomes observable.
-**Risk:** None if the deployment target already supports Swift Concurrency; otherwise this choice would lock out older OS versions.
+**Risk:** None if the deployment target already supports Swift Concurrency. Otherwise this choice would lock out older OS versions.
 
 <!--ff49d217_R_Q1_DONE-->
 
@@ -47,7 +47,7 @@ status: complete
 
 **Reviewer:** Agree — keeping ViewModels unchanged is the right call.
 **Verdict:** Agree
-**Reasoning:** For a privileged-helper architecture like Kjol, the view-model layer should stay minimal and avoid expanding its surface area for a minor secondary concern. Refactoring here would introduce risk without proportional gain.
+**Reasoning:** For a privileged-helper architecture like Kjol, the view-model layer must stay minimal and prevent expanding its surface area for a minor secondary concern. Refactoring here would introduce risk without proportional gain.
 **Risk:** Leaving an undocumented limitation in ViewModels could surface as future confusion or inconsistent behavior as the app evolves.
 <!--ff49d217_R_Q2_DONE-->
 <!--ff49d217_GM_Q2_DONE-->

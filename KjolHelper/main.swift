@@ -234,14 +234,49 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
     private func checkDaemonFailsafe() {
         let suspended = readState("daemons_suspended") == "1"
         guard suspended else { return }
-        if let startTime = Double(readState("failsafe_start_time")), startTime > 0 {
-            let elapsed = Date().timeIntervalSince1970 - startTime
-            if elapsed >= 14400.0 { // 4 hours
-                fputs("KjolHelper: Daemon suspension 4-hour failsafe triggered. Auto-resuming suspended daemons.\n", stderr)
-                suspendNonEssentialDaemons(false)
-                writeState("daemons_suspended", "0")
-                writeState("failsafe_triggered", "1")
-                stopDaemonFailsafeTimer()
+
+        // 1. Mandatory Health Arbiter (Always active, even in Persistent Mode):
+        // A. Critical Battery (<=8% on battery power without AC adapter)
+        let isBattery = readState("power_source") == "battery"
+        let batteryPct = Int(readState("battery_percent")) ?? 100
+        if isBattery && batteryPct <= 8 {
+            fputs("KjolHelper: Critical battery safety trigger (<=8%). Auto-resuming suspended daemons to allow graceful system sleep.\n", stderr)
+            suspendNonEssentialDaemons(false)
+            writeState("daemons_suspended", "0")
+            writeState("failsafe_triggered", "1")
+            writeState("failsafe_reason", "critical_battery")
+            stopDaemonFailsafeTimer()
+            return
+        }
+
+        // B. Extreme Thermal Runaway (Max junction temp >= 105C)
+        let socT = FanController.shared.socTemperature() ?? 0
+        let cpuT = FanController.shared.cpuTemperatures() ?? 0
+        let gpuT = FanController.shared.gpuTemperatures() ?? 0
+        let maxJunctionT = max(socT, max(cpuT, gpuT))
+        if maxJunctionT >= 105.0 {
+            fputs("KjolHelper: Extreme thermal runaway (>=105C). Auto-resuming suspended daemons.\n", stderr)
+            suspendNonEssentialDaemons(false)
+            writeState("daemons_suspended", "0")
+            writeState("failsafe_triggered", "1")
+            writeState("failsafe_reason", "thermal_critical")
+            stopDaemonFailsafeTimer()
+            return
+        }
+
+        // 2. 4-Hour Safety Ceiling (only evaluated if enabled by user)
+        let ceilingEnabled = readState("daemons_safety_ceiling_enabled") != "0"
+        if ceilingEnabled {
+            if let startTime = Double(readState("failsafe_start_time")), startTime > 0 {
+                let elapsed = Date().timeIntervalSince1970 - startTime
+                if elapsed >= 14400.0 { // 4 hours
+                    fputs("KjolHelper: Daemon suspension 4-hour safety ceiling triggered. Auto-resuming suspended daemons.\n", stderr)
+                    suspendNonEssentialDaemons(false)
+                    writeState("daemons_suspended", "0")
+                    writeState("failsafe_triggered", "1")
+                    writeState("failsafe_reason", "safety_ceiling_timeout")
+                    stopDaemonFailsafeTimer()
+                }
             }
         }
     }
@@ -285,11 +320,64 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
     private var lastAdaptiveTemp: Float = 0.0
     private var adaptivePeakHoldPct: Double = 0.0
     private var adaptiveHoldUntilTime: Double = 0.0
+    private var gentleSmoothedTemp: Float = 0.0
+    private var gentlePeakHoldPct: Double = 0.0
+    private var gentleHoldUntilTime: Double = 0.0
+    private var customPeakHoldPct: Double = 0.0
+    private var customHoldUntilTime: Double = 0.0
+
+    private var thermalThrottlingEngaged: Bool = false
+    private var thermalThrottleHoldUntil: Double = 0.0
+    private var fanSafetyBoostEngaged: Bool = false
+    private var fanSafetyBoostHoldUntil: Double = 0.0
+
+    private func parseCurvePoints(_ raw: String) -> [(temp: Float, rpm: Float)] {
+        let parts = raw.split(separator: ",").compactMap { Float($0.trimmingCharacters(in: .whitespaces)) }
+        var result: [(temp: Float, rpm: Float)] = []
+        var i = 0
+        while i + 1 < parts.count {
+            result.append((temp: parts[i], rpm: parts[i + 1]))
+            i += 2
+        }
+        if result.count < 2 {
+            return [
+                (temp: 45.0, rpm: 20.0),
+                (temp: 60.0, rpm: 35.0),
+                (temp: 75.0, rpm: 60.0),
+                (temp: 88.0, rpm: 90.0)
+            ]
+        }
+        return result.sorted { $0.temp < $1.temp }
+    }
+
+    private func evaluatePiecewiseCurve(temp: Float, points: [(temp: Float, rpm: Float)]) -> Double {
+        guard !points.isEmpty else { return 50.0 }
+        if temp <= points.first!.temp { return Double(points.first!.rpm) }
+        if temp >= points.last!.temp { return Double(points.last!.rpm) }
+        for i in 0..<(points.count - 1) {
+            let p0 = points[i]
+            let p1 = points[i + 1]
+            if temp >= p0.temp && temp <= p1.temp {
+                let range = p1.temp - p0.temp
+                guard range > 0 else { return Double(p0.rpm) }
+                let frac = (temp - p0.temp) / range
+                let val = p0.rpm + frac * (p1.rpm - p0.rpm)
+                return Double(val)
+            }
+        }
+        return Double(points.last!.rpm)
+    }
 
     private func evaluateFanManagement() throws {
         let savedProfile = readState("fan_profile")
-        if savedProfile.isEmpty || savedProfile == "auto" {
+        let safetyPolicy = readState("thermal_safety_policy")
+        let needsWatchdog = (!savedProfile.isEmpty && savedProfile != "auto") || (safetyPolicy == "throttleCPU" || safetyPolicy == "boostFans")
+
+        if !needsWatchdog {
             stopFanWatchdog()
+            if savedProfile == "auto" {
+                FanController.shared.setAllAuto()
+            }
             return
         }
 
@@ -315,7 +403,10 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
 
     private func tickFanWatchdog() {
         let savedProfile = readState("fan_profile")
-        guard !savedProfile.isEmpty, savedProfile != "auto" else {
+        let safetyPolicy = readState("thermal_safety_policy")
+        let needsWatchdog = (!savedProfile.isEmpty && savedProfile != "auto") || (safetyPolicy == "throttleCPU" || safetyPolicy == "boostFans")
+
+        guard needsWatchdog else {
             stopFanWatchdog()
             return
         }
@@ -325,55 +416,155 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
     private func applyFanProfile() throws {
         let fc = FanController.shared
         let count = fc.fanCount
+
+        // 1. Evaluate Max Junction Temperature across SoC, CPU, and GPU
+        let socT = fc.socTemperature() ?? 0
+        let cpuT = fc.cpuTemperatures() ?? 0
+        let gpuT = fc.gpuTemperatures() ?? 0
+        let currentTemp = max(socT, max(cpuT, gpuT))
+
+        // 2. Evaluate Thermal Safety Arbiter Policy
+        let safetyPolicy = readState("thermal_safety_policy")
+        let ceilingTemp = Double(readState("thermal_ceiling_temp")) ?? 85.0
+        let now = Date().timeIntervalSince1970
+
+        if safetyPolicy == "throttleCPU" {
+            if currentTemp >= Float(ceilingTemp) {
+                if !thermalThrottlingEngaged {
+                    thermalThrottlingEngaged = true
+                    shell(["/usr/bin/pmset", "-a", "lowpowermode", "1"])
+                }
+                thermalThrottleHoldUntil = now + 15.0
+            } else if thermalThrottlingEngaged && currentTemp <= Float(ceilingTemp - 5.0) && now >= thermalThrottleHoldUntil {
+                thermalThrottlingEngaged = false
+                let sysPreset = readState("system_preset")
+                if sysPreset != "gentle" {
+                    shell(["/usr/bin/pmset", "-a", "lowpowermode", "0"])
+                }
+            }
+        } else if thermalThrottlingEngaged {
+            thermalThrottlingEngaged = false
+            let sysPreset = readState("system_preset")
+            if sysPreset != "gentle" {
+                shell(["/usr/bin/pmset", "-a", "lowpowermode", "0"])
+            }
+        }
+
+        if safetyPolicy == "boostFans" {
+            if currentTemp >= Float(ceilingTemp) {
+                if !fanSafetyBoostEngaged {
+                    fanSafetyBoostEngaged = true
+                }
+                fanSafetyBoostHoldUntil = now + 15.0
+            } else if fanSafetyBoostEngaged && currentTemp <= Float(ceilingTemp - 5.0) && now >= fanSafetyBoostHoldUntil {
+                fanSafetyBoostEngaged = false
+            }
+        } else {
+            fanSafetyBoostEngaged = false
+        }
+
+        // If fan safety boost is engaged, yield manual control to native macOS SMC so fans spin to safe speeds!
+        if fanSafetyBoostEngaged {
+            fc.setAllAuto()
+            return
+        }
+
         guard count > 0 else { return }
 
         let savedProfile = readState("fan_profile")
-        guard !savedProfile.isEmpty, savedProfile != "auto" else { return }
+        if savedProfile.isEmpty || savedProfile == "auto" {
+            fc.setAllAuto()
+            return
+        }
 
         var targetPercent: Double = 0.0
 
         if savedProfile == "adaptive" || savedProfile == "balanced" {
-            let socT = fc.socTemperature() ?? 0
-            let cpuT = fc.cpuTemperatures() ?? 0
-            let currentTemp = max(socT, cpuT)
-
-            let minT: Float = 42.0
-            let maxT: Float = 85.0
-            let baseRatio = Double(max(0.0, min(1.0, (currentTemp - minT) / (maxT - minT))))
-            let calculatedPct = (baseRatio * 100.0)
-
-            // Predictive Thermal Acceleration:
-            // Calculate rate of rise ΔT / Δt across 5s watchdog intervals
+            let subProfile = readState("fan_adaptive_subprofile")
             let now = Date().timeIntervalSince1970
-            if lastAdaptiveTemp > 0 {
-                let deltaT = currentTemp - lastAdaptiveTemp
-                // Proactively boost target if rapid rise (>= +2°C / 5s) or nearing 68°C+
-                if deltaT >= 2.0 || (currentTemp >= 68.0 && deltaT > 0.5) {
-                    let proactiveBoost = Double(max(15.0, deltaT * 8.0))
-                    let boostedPct = min(100.0, calculatedPct + proactiveBoost)
-                    if boostedPct > adaptivePeakHoldPct {
-                        adaptivePeakHoldPct = boostedPct
-                        adaptiveHoldUntilTime = now + 12.0 // 12-second asymmetric spin-down hold
+
+            if subProfile == "aggressive" {
+                let aggressivePoints: [(temp: Float, rpm: Float)] = [
+                    (temp: 40.0, rpm: 15.0),
+                    (temp: 55.0, rpm: 35.0),
+                    (temp: 70.0, rpm: 70.0),
+                    (temp: 85.0, rpm: 100.0)
+                ]
+                let calculatedPct = evaluatePiecewiseCurve(temp: currentTemp, points: aggressivePoints)
+
+                // Predictive Thermal Acceleration:
+                // Boost target if rapid rise (>= +2°C / 5s) or nearing 68°C+
+                if lastAdaptiveTemp > 0 {
+                    let deltaT = currentTemp - lastAdaptiveTemp
+                    if deltaT >= 2.0 || (currentTemp >= 68.0 && deltaT > 0.5) {
+                        let proactiveBoost = Double(max(15.0, deltaT * 8.0))
+                        let boostedPct = min(100.0, calculatedPct + proactiveBoost)
+                        if boostedPct > adaptivePeakHoldPct {
+                            adaptivePeakHoldPct = boostedPct
+                            adaptiveHoldUntilTime = now + 12.0 // 12-second asymmetric spin-down hold
+                        }
                     }
                 }
-            }
-            lastAdaptiveTemp = currentTemp
+                lastAdaptiveTemp = currentTemp
 
-            // Apply 12s spin-down hysteresis to prevent acoustic fan hunting
-            if now < adaptiveHoldUntilTime {
-                targetPercent = max(calculatedPct, adaptivePeakHoldPct)
+                if now < adaptiveHoldUntilTime {
+                    targetPercent = max(calculatedPct, adaptivePeakHoldPct)
+                } else {
+                    targetPercent = calculatedPct
+                    adaptivePeakHoldPct = calculatedPct
+                }
+                targetPercent = max(15.0, min(100.0, targetPercent))
+            } else if subProfile == "custom" {
+                let customPoints = parseCurvePoints(readState("fan_curve_points"))
+                let calculatedPct = evaluatePiecewiseCurve(temp: currentTemp, points: customPoints)
+
+                // 10-second asymmetric spin-down hold to prevent hunting around anchor thresholds
+                if calculatedPct > customPeakHoldPct {
+                    customPeakHoldPct = calculatedPct
+                    customHoldUntilTime = now + 10.0
+                }
+                if now < customHoldUntilTime {
+                    targetPercent = max(calculatedPct, customPeakHoldPct)
+                } else {
+                    targetPercent = calculatedPct
+                    customPeakHoldPct = calculatedPct
+                }
+                targetPercent = max(0.0, min(100.0, targetPercent))
             } else {
-                targetPercent = calculatedPct
-                adaptivePeakHoldPct = calculatedPct
+                // Default: "gentle" (Cool Native)
+                let gentlePoints: [(temp: Float, rpm: Float)] = [
+                    (temp: 45.0, rpm: 18.0),
+                    (temp: 60.0, rpm: 30.0),
+                    (temp: 75.0, rpm: 55.0),
+                    (temp: 90.0, rpm: 90.0)
+                ]
+                // Low-pass EMA smoothing: alpha = 0.35
+                if gentleSmoothedTemp <= 0.0 {
+                    gentleSmoothedTemp = currentTemp
+                } else {
+                    gentleSmoothedTemp = (gentleSmoothedTemp * 0.65) + (currentTemp * 0.35)
+                }
+                let calculatedPct = evaluatePiecewiseCurve(temp: gentleSmoothedTemp, points: gentlePoints)
+
+                // 20-second gradual spin-down hold for whisper-quiet acoustic transitions
+                if calculatedPct > gentlePeakHoldPct {
+                    gentlePeakHoldPct = calculatedPct
+                    gentleHoldUntilTime = now + 20.0
+                }
+                if now < gentleHoldUntilTime {
+                    targetPercent = max(calculatedPct, gentlePeakHoldPct)
+                } else {
+                    targetPercent = calculatedPct
+                    gentlePeakHoldPct = calculatedPct
+                }
+                targetPercent = max(15.0, min(100.0, targetPercent))
             }
-            // Ensure adaptive floor is at least 15% for steady airflow
-            targetPercent = max(15.0, min(100.0, targetPercent))
-        } else if savedProfile == "quiet" {
-            targetPercent = 25.0
         } else if savedProfile == "blast" {
             targetPercent = 100.0
-        } else if savedProfile == "custom" {
+        } else if savedProfile == "manual" || savedProfile == "custom" {
             targetPercent = max(0.0, min(100.0, Double(readState("fan_rpm_percent")) ?? 50.0))
+        } else if savedProfile == "quiet" {
+            targetPercent = 25.0
         }
 
         // Apply proportional target to each fan and verify persistence
@@ -628,11 +819,22 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
         if on {
             writeState("failsafe_start_time", String(Date().timeIntervalSince1970))
             writeState("failsafe_triggered", "0")
+            writeState("failsafe_reason", "")
             startDaemonFailsafeTimerIfNeeded()
         } else {
             stopDaemonFailsafeTimer()
             writeState("failsafe_start_time", "")
             writeState("failsafe_triggered", "0")
+            writeState("failsafe_reason", "")
+        }
+        reply(true, nil)
+    }
+
+    func setDaemonSafetyCeiling(_ enabled: Bool, reply: @escaping (Bool, NSError?) -> Void) {
+        writeState("daemons_safety_ceiling_enabled", enabled ? "1" : "0")
+        if enabled && readState("daemons_suspended") == "1" {
+            writeState("failsafe_start_time", String(Date().timeIntervalSince1970))
+            startDaemonFailsafeTimerIfNeeded()
         }
         reply(true, nil)
     }
@@ -649,28 +851,31 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
         return (true, "caffeinate -i -m active")
     }
 
-    private let defaultNonEssentialDaemons = [
+    private let defaultFreezeDaemons = [
         "mediaanalysisd",
+        "photoanalysisd",
+        "triald",
+        "analyticsd",
+        "parsecd",
+        "backupd",
+        "knowledge-agent"
+    ]
+
+    private let defaultThrottleDaemons = [
         "mds",
         "corespotlightd",
         "spotlightknowledged",
         "mdworker",
         "managedcorespotlightd",
-        "photoanalysisd",
         "mds_stores",
-        "backupd",
         "suggestd",
         "routined",
-        "knowledge-agent",
-        "triald",
-        "analyticsd",
-        "parsecd",
         "siriknowledged",
         "touristd",
         "coreduetd"
     ]
 
-    private func getNonEssentialDaemons() -> [String] {
+    private func getCategorizedDaemons() -> (freeze: [String], throttle: [String]) {
         let plistPath = "/var/db/kjol/suspended_daemons.plist"
         var statBuf = stat()
         if stat(plistPath, &statBuf) == 0 {
@@ -680,27 +885,77 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
 
             if isRoot && isWheel && notWritableByOthers {
                 if let data = try? Data(contentsOf: URL(fileURLWithPath: plistPath)),
-                   let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
-                   let array = plist as? [String] {
-                    return array
+                   let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
+                    if let dict = plist as? [String: [String]] {
+                        let freeze = dict["freeze"] ?? defaultFreezeDaemons
+                        let throttle = dict["throttle"] ?? defaultThrottleDaemons
+                        return (freeze, throttle)
+                    } else if let array = plist as? [String] {
+                        let freezeSet = Set(defaultFreezeDaemons)
+                        let freeze = array.filter { freezeSet.contains($0) }
+                        let throttle = array.filter { !freezeSet.contains($0) }
+                        return (freeze, throttle)
+                    }
                 } else {
-                    fputs("KjolHelper: Failed to parse \(plistPath) as [String]. Falling back to defaults.\n", stderr)
+                    fputs("KjolHelper: Failed to parse \(plistPath). Falling back to defaults.\n", stderr)
                 }
             } else {
                 fputs("KjolHelper: Invalid permissions or ownership for \(plistPath). Falling back to defaults.\n", stderr)
             }
         }
-        return defaultNonEssentialDaemons
+        return (defaultFreezeDaemons, defaultThrottleDaemons)
     }
 
     private func suspendNonEssentialDaemons(_ on: Bool) {
-        let pattern = getNonEssentialDaemons().joined(separator: "|")
+        let (freezeList, throttleList) = getCategorizedDaemons()
+        let freezePattern = freezeList.joined(separator: "|")
+        let throttlePattern = throttleList.joined(separator: "|")
+
         if on {
+            // 1. Halt new Spotlight indexing generation
             shell(["/usr/bin/mdutil", "-a", "-i", "off"])
-            shell(["/usr/bin/pkill", "-STOP", "-f", pattern])
+
+            // 2. Freeze purely asynchronous batch daemons via SIGSTOP
+            if !freezePattern.isEmpty {
+                shell(["/usr/bin/pkill", "-STOP", "-f", freezePattern])
+            }
+
+            // 3. Demote synchronous/IPC daemons to Darwin background QoS & lowest I/O tier.
+            // This confines them strictly to E-cores with IOPOL_THROTTLE, eliminating P-core contention
+            // while preserving IPC responsiveness (preventing UI beachballs and file dialog hangs).
+            if !throttlePattern.isEmpty {
+                let pgrepResult = shell(["/usr/bin/pgrep", "-f", throttlePattern])
+                let pids = pgrepResult.output
+                    .split(whereSeparator: \.isNewline)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                for pid in pids {
+                    shell(["/usr/sbin/taskpolicy", "-b", "-t", "3", "-p", pid])
+                }
+            }
+
+            // 4. Actively reclaim unified RAM: purge inactive file cache and purgeable buffers
+            shell(["/usr/sbin/purge"])
         } else {
+            // 1. Unfreeze batch daemons via SIGCONT
+            if !freezePattern.isEmpty {
+                shell(["/usr/bin/pkill", "-CONT", "-f", freezePattern])
+            }
+
+            // 2. Restore normal Darwin QoS and default I/O tier for throttled daemons
+            if !throttlePattern.isEmpty {
+                let pgrepResult = shell(["/usr/bin/pgrep", "-f", throttlePattern])
+                let pids = pgrepResult.output
+                    .split(whereSeparator: \.isNewline)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                for pid in pids {
+                    shell(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-p", pid])
+                }
+            }
+
+            // 3. Re-enable Spotlight indexing
             shell(["/usr/bin/mdutil", "-a", "-i", "on"])
-            shell(["/usr/bin/pkill", "-CONT", "-f", pattern])
         }
     }
 
@@ -708,11 +963,15 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
         let alwaysOn = readState("always_on")
         let daemonsSuspended = readState("daemons_suspended")
         let failsafeTriggered = readState("failsafe_triggered")
+        let safetyCeilingEnabled = readState("daemons_safety_ceiling_enabled") != "0"
+        let failsafeReason = readState("failsafe_reason")
 
         return [
             "always_on": alwaysOn == "1",
             "daemons_suspended": daemonsSuspended == "1",
+            "daemons_safety_ceiling_enabled": safetyCeilingEnabled,
             "daemons_failsafe_triggered": failsafeTriggered == "1",
+            "daemons_failsafe_reason": failsafeReason,
             "caffeinate_running": caffeinateRunning(),
             "caffeinate_pid": caffeinateRunning() ? String(caffeinateProcess!.processIdentifier) : "",
             "sleep_disabled_ok": readState("sleep_disabled_ok") != "0",
@@ -727,12 +986,30 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
             [Double(f.index), Double(f.actualRPM), Double(f.targetRPM),
              Double(f.minRPM), Double(f.maxRPM), Double(f.mode)]
         }
+        let savedSub = readState("fan_adaptive_subprofile")
+        let savedSafety = readState("thermal_safety_policy")
+        let savedCeiling = Double(readState("thermal_ceiling_temp")) ?? 85.0
+        let savedPreset = readState("system_preset")
+
         var out: [String: Any] = [
             "fanCount": fc.fanCount,
             "fans": fans,
             "profile": readState("fan_profile").isEmpty ? "auto" : readState("fan_profile"),
-            "rpmPercent": Double(readState("fan_rpm_percent")) ?? 0
+            "rpmPercent": Double(readState("fan_rpm_percent")) ?? 0,
+            "adaptiveSubProfile": savedSub.isEmpty ? "gentle" : savedSub,
+            "safetyPolicy": savedSafety.isEmpty ? "off" : savedSafety,
+            "ceilingTemp": savedCeiling,
+            "systemPreset": savedPreset.isEmpty ? "none" : savedPreset,
+            "throttlingEngaged": thermalThrottlingEngaged,
+            "fanBoostEngaged": fanSafetyBoostEngaged
         ]
+        let rawPoints = readState("fan_curve_points")
+        if !rawPoints.isEmpty {
+            let pts = rawPoints.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            if !pts.isEmpty {
+                out["curvePoints"] = pts
+            }
+        }
         if let t = fc.socTemperature() { out["socTemp"] = Double(t) }
         if let t = fc.cpuTemperatures() { out["cpuTemp"] = Double(t) }
         if let t = fc.gpuTemperatures() { out["gpuTemp"] = Double(t) }
@@ -763,6 +1040,10 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
         }
 
         do {
+            if readState("system_preset") != "none" {
+                writeState("system_preset", "none")
+            }
+
             if profile == "auto" {
                 writeState("fan_profile", "auto")
                 writeState("fan_rpm_percent", "0")
@@ -774,6 +1055,36 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
 
             if profile == "adaptive" || profile == "balanced" {
                 writeState("fan_profile", "adaptive")
+                if readState("fan_adaptive_subprofile").isEmpty {
+                    writeState("fan_adaptive_subprofile", "gentle")
+                }
+                writeState("fan_rpm_percent", "0")
+                try evaluateFanManagement()
+                reply(true, nil)
+                return
+            }
+
+            if profile == "adaptive_gentle" {
+                writeState("fan_profile", "adaptive")
+                writeState("fan_adaptive_subprofile", "gentle")
+                writeState("fan_rpm_percent", "0")
+                try evaluateFanManagement()
+                reply(true, nil)
+                return
+            }
+
+            if profile == "adaptive_aggressive" {
+                writeState("fan_profile", "adaptive")
+                writeState("fan_adaptive_subprofile", "aggressive")
+                writeState("fan_rpm_percent", "0")
+                try evaluateFanManagement()
+                reply(true, nil)
+                return
+            }
+
+            if profile == "adaptive_custom" {
+                writeState("fan_profile", "adaptive")
+                writeState("fan_adaptive_subprofile", "custom")
                 writeState("fan_rpm_percent", "0")
                 try evaluateFanManagement()
                 reply(true, nil)
@@ -781,7 +1092,7 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
             }
 
             if profile == "quiet" {
-                writeState("fan_profile", "quiet")
+                writeState("fan_profile", "manual")
                 writeState("fan_rpm_percent", "25")
                 try evaluateFanManagement()
                 reply(true, nil)
@@ -796,9 +1107,9 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
                 return
             }
 
-            if profile == "custom" {
+            if profile == "manual" || profile == "custom" {
                 let clamped = max(0, min(rpmPercent, 100))
-                writeState("fan_profile", "custom")
+                writeState("fan_profile", "manual")
                 writeState("fan_rpm_percent", String(Int(clamped)))
                 try evaluateFanManagement()
                 reply(true, nil)
@@ -814,6 +1125,81 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
             reply(false, NSError(domain: "com.lappier.kjol.smc", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ftst unlock in progress"]))
         } catch SMCError.fanModeWriteFailed {
             reply(false, NSError(domain: "com.lappier.kjol.smc", code: 2, userInfo: [NSLocalizedDescriptionKey: "Fan mode write rejected by SMC"]))
+        } catch {
+            reply(false, NSError(domain: "com.lappier.kjol.smc", code: 3, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription]))
+        }
+    }
+
+    func setFanAdaptiveProfile(subProfile: String, curvePoints: [Double], reply: @escaping (Bool, NSError?) -> Void) {
+        let fc = FanController.shared
+        guard fc.fanCount > 0 else {
+            reply(false, KjolXPCError.makeNSError(message: "No fans detected"))
+            return
+        }
+
+        do {
+            if readState("system_preset") != "none" {
+                writeState("system_preset", "none")
+            }
+            writeState("fan_profile", "adaptive")
+            let validSub = (subProfile == "aggressive" || subProfile == "custom") ? subProfile : "gentle"
+            writeState("fan_adaptive_subprofile", validSub)
+            if !curvePoints.isEmpty {
+                let formatted = curvePoints.map { String(format: "%.1f", $0) }.joined(separator: ",")
+                writeState("fan_curve_points", formatted)
+            }
+            writeState("fan_rpm_percent", "0")
+            try evaluateFanManagement()
+            reply(true, nil)
+        } catch SMCError.ftstUnlockInProgress {
+            reply(false, NSError(domain: "com.lappier.kjol.smc", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ftst unlock in progress"]))
+        } catch SMCError.fanModeWriteFailed {
+            reply(false, NSError(domain: "com.lappier.kjol.smc", code: 2, userInfo: [NSLocalizedDescriptionKey: "Fan mode write rejected by SMC"]))
+        } catch {
+            reply(false, NSError(domain: "com.lappier.kjol.smc", code: 3, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription]))
+        }
+    }
+
+    func setThermalSafetyPolicy(policy: String, ceilingTempC: Double, reply: @escaping (Bool, NSError?) -> Void) {
+        let validPolicy = (policy == "boostFans" || policy == "throttleCPU") ? policy : "off"
+        writeState("thermal_safety_policy", validPolicy)
+        let clampedCeiling = max(65.0, min(105.0, ceilingTempC))
+        writeState("thermal_ceiling_temp", String(format: "%.1f", clampedCeiling))
+        if readState("system_preset") != "none" {
+            writeState("system_preset", "none")
+        }
+        try? evaluateFanManagement()
+        reply(true, nil)
+    }
+
+    func setSystemPreset(preset: String, reply: @escaping (Bool, NSError?) -> Void) {
+        do {
+            if preset == "maxCompute" {
+                writeState("system_preset", "maxCompute")
+                writeState("fan_profile", "adaptive")
+                writeState("fan_adaptive_subprofile", "aggressive")
+                writeState("thermal_safety_policy", "boostFans")
+                writeState("thermal_ceiling_temp", "95.0")
+                shell(["/usr/bin/pmset", "-a", "lowpowermode", "0"])
+                try evaluateFanManagement()
+                reply(true, nil)
+                return
+            }
+
+            if preset == "gentle" {
+                writeState("system_preset", "gentle")
+                writeState("fan_profile", "manual")
+                writeState("fan_rpm_percent", "25")
+                writeState("thermal_safety_policy", "throttleCPU")
+                writeState("thermal_ceiling_temp", "75.0")
+                shell(["/usr/bin/pmset", "-a", "lowpowermode", "1"])
+                try evaluateFanManagement()
+                reply(true, nil)
+                return
+            }
+
+            writeState("system_preset", "none")
+            reply(true, nil)
         } catch {
             reply(false, NSError(domain: "com.lappier.kjol.smc", code: 3, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription]))
         }

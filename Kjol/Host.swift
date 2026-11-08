@@ -36,14 +36,23 @@ final class Host: ObservableObject {
     }
 
     private func setupViewModelCallbacks() {
-        fanControlVM.onProfileChange = { [weak self] profile, pct in
-            self?.setFanProfile(profile, customPercent: pct)
+        fanControlVM.onProfileChange = { [weak self] profile, pct, subProfile, curvePoints in
+            self?.setFanProfile(profile, customPercent: pct, adaptiveSubProfile: subProfile, curvePoints: curvePoints)
+        }
+        fanControlVM.onSafetyPolicyChange = { [weak self] policy, ceiling in
+            self?.setThermalSafetyPolicy(policy, ceilingTemp: ceiling)
+        }
+        fanControlVM.onPresetChange = { [weak self] preset in
+            self?.setSystemPreset(preset)
         }
         powerVM.onAlwaysOnToggle = { [weak self] on in
             self?.setAlwaysOn(on)
         }
         powerVM.onDaemonsToggle = { [weak self] on in
             self?.setDaemonsSuspended(on)
+        }
+        powerVM.onDaemonsSafetyCeilingToggle = { [weak self] enabled in
+            self?.setDaemonSafetyCeiling(enabled)
         }
         powerVM.onBatteryLimitChange = { [weak self] limit, enabled in
             self?.setBatteryLimit(limit, enabled: enabled)
@@ -124,7 +133,14 @@ final class Host: ObservableObject {
                     self.powerVM.updateBatteryState(batteryDict: battery)
                     self.fanControlVM.updateFromDaemon(
                         profileString: fansDict["profile"] as? String,
-                        rpmPercent: fansDict["rpmPercent"] as? Double
+                        rpmPercent: fansDict["rpmPercent"] as? Double,
+                        subProfileString: fansDict["adaptiveSubProfile"] as? String,
+                        curvePoints: fansDict["curvePoints"] as? [Double],
+                        safetyPolicyString: fansDict["safetyPolicy"] as? String,
+                        ceilingTemp: fansDict["ceilingTemp"] as? Double,
+                        systemPresetString: fansDict["systemPreset"] as? String,
+                        throttlingEngaged: fansDict["throttlingEngaged"] as? Bool,
+                        fanBoostEngaged: fansDict["fanBoostEngaged"] as? Bool
                     )
                 }
             } catch {
@@ -160,13 +176,31 @@ final class Host: ObservableObject {
         }
     }
 
-    func setFanProfile(_ profile: FanProfile, customPercent: Double? = nil) {
+    func setDaemonSafetyCeiling(_ enabled: Bool) {
+        performAction { [weak self] in
+            _ = try await self?.xpcClient.setDaemonSafetyCeiling(enabled)
+        }
+    }
+
+    func setFanProfile(
+        _ profile: FanProfile,
+        customPercent: Double? = nil,
+        adaptiveSubProfile: AdaptiveSubProfile? = nil,
+        curvePoints: [Double]? = nil
+    ) {
         let pct = customPercent ?? fanControlVM.customPercent
+        let sub = (adaptiveSubProfile ?? fanControlVM.adaptiveSubProfile).rawValue
+        let pts = curvePoints ?? fanControlVM.flattenedCurvePoints
+
         performAction { [weak self] in
             var attempt = 0
             while attempt < 12 {
                 do {
-                    _ = try await self?.xpcClient.setFanProfile(profile.rawValue, rpmPercent: pct)
+                    if profile == .adaptive {
+                        _ = try await self?.xpcClient.setFanAdaptiveProfile(subProfile: sub, curvePoints: pts)
+                    } else {
+                        _ = try await self?.xpcClient.setFanProfile(profile.rawValue, rpmPercent: pct)
+                    }
                     break
                 } catch {
                     let nsError = error as NSError
@@ -178,6 +212,18 @@ final class Host: ObservableObject {
                     throw error
                 }
             }
+        }
+    }
+
+    func setThermalSafetyPolicy(_ policy: ThermalSafetyPolicy, ceilingTemp: Double) {
+        performAction { [weak self] in
+            _ = try await self?.xpcClient.setThermalSafetyPolicy(policy: policy.rawValue, ceilingTempC: ceilingTemp)
+        }
+    }
+
+    func setSystemPreset(_ preset: SystemPreset) {
+        performAction { [weak self] in
+            _ = try await self?.xpcClient.setSystemPreset(preset.rawValue)
         }
     }
 

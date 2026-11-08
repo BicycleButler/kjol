@@ -22,11 +22,10 @@ status: complete
 
 **Recommendation:** B — Replace try? with try + logging — surfaces failures for debugging while still catching errors gracefully.
 
-**Reviewer:** Agree; the recommendation is sound and already narrows to the lowest-overhead option.
+**Reviewer:** Agree. The recommendation is sound and already narrows to the lowest-overhead option.
 **Verdict:** Agree
 **Reasoning:** SMC reads can legitimately fail transiently, but silently swallowing every failure hides real issues and makes support harder. Adding logging preserves safety while improving debuggability.
-**Risk:** Low; the helper daemon already has a logging path and adding do-catch blocks is straightforward.
-
+**Risk:** Low. The helper daemon already has a logging path and adding do-catch blocks is straightforward.
 
 <!--94f8fce3_R_Q1_DONE-->
 <!--94f8fce3_GM_Q1_DONE-->
@@ -47,8 +46,8 @@ status: complete
 
 **Reviewer:** Agree — adding failure logging to shell() calls preserves daemon uptime while surfacing transient hardware command failures for diagnostics.
 **Verdict:** Agree
-**Reasoning:** This is a pragmatic incremental step; keep try? swallowing the error, but log the fact that a shell command failed so operators can detect patterns. Structured Result<...> (option C) would be ideal long-term but is a larger refactor not justified yet.
-**Risk:** Logging should avoid recording sensitive command arguments if these calls ever pass secrets or host-specific state.
+**Reasoning:** This is a pragmatic incremental step. Keep try? swallowing the error, but log the fact that a shell command failed so operators can detect patterns. Structured Result<...> (option C) would be ideal long-term but is a larger refactor not justified yet.
+**Risk:** Logging must prevent recording sensitive command arguments if these calls ever pass secrets or host-specific state.
 <!--94f8fce3_R_Q2_DONE-->
 <!--94f8fce3_GM_Q2_DONE-->
 

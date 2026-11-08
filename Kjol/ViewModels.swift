@@ -2,6 +2,12 @@ import Foundation
 import Combine
 import SwiftUI
 
+public enum BatteryControlTier: String, Equatable {
+    case directSMC        // Pre-macOS 27 with writable SMC keys: full custom charge limit, sailing, top-up, discharge
+    case systemManaged    // macOS 27+ or systems with OS-enforced battery limits: native telemetry + Settings handoff
+    case desktopNoBattery // Stationary Apple Silicon hardware with no battery
+}
+
 final class TelemetryViewModel: ObservableObject {
     @Published var socTemp: Double?
     @Published var cpuTemp: Double?
@@ -22,9 +28,11 @@ final class TelemetryViewModel: ObservableObject {
     @Published var externalConnected: Bool = false
     @Published var batteryCycles: Int = 0
     @Published var batteryTemp: Double?
+    @Published var batteryHealthPercent: Double?
     @Published var hasCpuSample: Bool = false
     @Published var hardwareControlSupported: Bool = true
     @Published var nativeChargeLimitAvailable: Bool = false
+    @Published var batteryTier: BatteryControlTier = .systemManaged
 
     func updateTelemetry(cpu: CpuState, fansDict: [String: Any], batteryDict: [String: Any]) {
         if pCoreCount != cpu.pCoreCount { pCoreCount = cpu.pCoreCount }
@@ -69,57 +77,245 @@ final class TelemetryViewModel: ObservableObject {
         if batteryCycles != cyc { batteryCycles = cyc }
         let bTemp = batteryDict["temperature"] as? Double
         if batteryTemp != bTemp { batteryTemp = bTemp }
+        if let hp = batteryDict["healthPercent"] as? Double {
+            if batteryHealthPercent != hp { batteryHealthPercent = hp }
+        }
+
         if let hcs = batteryDict["hardwareControlSupported"] as? Bool, hardwareControlSupported != hcs {
             hardwareControlSupported = hcs
         }
         if let ncl = batteryDict["nativeChargeLimitAvailable"] as? Bool, nativeChargeLimitAvailable != ncl {
             nativeChargeLimitAvailable = ncl
         }
+
+        let present = batteryDict["present"] as? Bool ?? (batteryDict["chargePercent"] != nil)
+        let resolvedTier: BatteryControlTier = !present ? .desktopNoBattery : (hardwareControlSupported ? .directSMC : .systemManaged)
+        if batteryTier != resolvedTier {
+            batteryTier = resolvedTier
+        }
     }
 }
 
 final class FanControlViewModel: ObservableObject {
     @Published var profile: FanProfile = .auto
+    @Published var adaptiveSubProfile: AdaptiveSubProfile = .gentle
     @Published var customPercent: Double = 50
+    @Published var customCurveAnchors: [CurveMilestone] = [
+        CurveMilestone(temp: 45, rpmPercent: 20, label: "Cool"),
+        CurveMilestone(temp: 60, rpmPercent: 35, label: "Warm"),
+        CurveMilestone(temp: 75, rpmPercent: 60, label: "Hot"),
+        CurveMilestone(temp: 88, rpmPercent: 90, label: "Max")
+    ]
 
-    var onProfileChange: ((FanProfile, Double?) -> Void)?
+    @Published var systemPreset: SystemPreset = .none
+    @Published var safetyPolicy: ThermalSafetyPolicy = .off
+    @Published var thermalCeilingTemp: Double = 85.0
+    @Published var isThrottlingEngaged: Bool = false
+    @Published var isFanBoostEngaged: Bool = false
+
+    var onProfileChange: ((FanProfile, Double?, AdaptiveSubProfile?, [Double]?) -> Void)?
+    var onSafetyPolicyChange: ((ThermalSafetyPolicy, Double) -> Void)?
+    var onPresetChange: ((SystemPreset) -> Void)?
+
     private var debounceWorkItem: DispatchWorkItem?
 
-    func updateFromDaemon(profileString: String?, rpmPercent: Double?) {
+    private let defaultsKeySubProfile = "kjol.fan.adaptiveSubProfile"
+    private let defaultsKeyAnchors = "kjol.fan.customCurveAnchors"
+
+    init() {
+        if let savedSub = UserDefaults.standard.string(forKey: defaultsKeySubProfile),
+           let sub = AdaptiveSubProfile(rawValue: savedSub) {
+            self.adaptiveSubProfile = sub
+        }
+        if let savedData = UserDefaults.standard.data(forKey: defaultsKeyAnchors),
+           let decoded = try? JSONDecoder().decode([CurveMilestone].self, from: savedData),
+           decoded.count == 4 {
+            self.customCurveAnchors = decoded
+        }
+    }
+
+    var flattenedCurvePoints: [Double] {
+        var pts: [Double] = []
+        for a in customCurveAnchors.sorted(by: { $0.temp < $1.temp }) {
+            pts.append(a.temp)
+            pts.append(a.rpmPercent)
+        }
+        return pts
+    }
+
+    func updateFromDaemon(
+        profileString: String?,
+        rpmPercent: Double?,
+        subProfileString: String? = nil,
+        curvePoints: [Double]? = nil,
+        safetyPolicyString: String? = nil,
+        ceilingTemp: Double? = nil,
+        systemPresetString: String? = nil,
+        throttlingEngaged: Bool? = nil,
+        fanBoostEngaged: Bool? = nil
+    ) {
         if let pStr = profileString {
-            let normalized = (pStr == "balanced" || pStr == "cool") ? "adaptive" : pStr
+            let normalized: String
+            if pStr == "balanced" || pStr == "cool" {
+                normalized = "adaptive"
+            } else if pStr == "custom" || pStr == "quiet" {
+                normalized = "manual"
+            } else {
+                normalized = pStr
+            }
             if let prof = FanProfile(rawValue: normalized) {
                 if profile != prof { profile = prof }
             }
         }
-        if let pct = rpmPercent, pct > 0, profile == .custom {
+        if let subStr = subProfileString, let sub = AdaptiveSubProfile(rawValue: subStr) {
+            if adaptiveSubProfile != sub {
+                adaptiveSubProfile = sub
+            }
+        }
+        if let pct = rpmPercent, pct > 0, profile == .manual {
             if customPercent != pct { customPercent = pct }
+        }
+        if let pts = curvePoints, pts.count >= 8, profile == .adaptive && adaptiveSubProfile == .custom {
+            var newAnchors: [CurveMilestone] = []
+            let labels = ["Cool", "Warm", "Hot", "Max"]
+            var i = 0
+            var idx = 0
+            while i + 1 < pts.count && idx < 4 {
+                let lbl = idx < labels.count ? labels[idx] : "Zone \(idx+1)"
+                newAnchors.append(CurveMilestone(temp: pts[i], rpmPercent: pts[i + 1], label: lbl))
+                i += 2
+                idx += 1
+            }
+            if newAnchors.count == 4 && newAnchors != customCurveAnchors {
+                customCurveAnchors = newAnchors
+            }
+        }
+
+        if let sStr = safetyPolicyString, let pol = ThermalSafetyPolicy(rawValue: sStr) {
+            if safetyPolicy != pol { safetyPolicy = pol }
+        }
+        if let ceil = ceilingTemp, ceil > 0 {
+            if thermalCeilingTemp != ceil { thermalCeilingTemp = ceil }
+        }
+        if let prStr = systemPresetString, let pr = SystemPreset(rawValue: prStr) {
+            if systemPreset != pr { systemPreset = pr }
+        }
+        if let th = throttlingEngaged {
+            if isThrottlingEngaged != th { isThrottlingEngaged = th }
+        }
+        if let fb = fanBoostEngaged {
+            if isFanBoostEngaged != fb { isFanBoostEngaged = fb }
         }
     }
 
+    func selectSystemPreset(_ preset: SystemPreset) {
+        systemPreset = preset
+        if preset == .maxCompute {
+            profile = .adaptive
+            adaptiveSubProfile = .aggressive
+            safetyPolicy = .boostFans
+            thermalCeilingTemp = 95.0
+        } else if preset == .gentle {
+            profile = .manual
+            customPercent = 25.0
+            safetyPolicy = .throttleCPU
+            thermalCeilingTemp = 75.0
+        }
+        onPresetChange?(preset)
+    }
+
+    func setThermalSafetyPolicy(_ policy: ThermalSafetyPolicy, ceiling: Double? = nil) {
+        safetyPolicy = policy
+        if let c = ceiling {
+            thermalCeilingTemp = c
+        }
+        systemPreset = .none
+        onSafetyPolicyChange?(policy, thermalCeilingTemp)
+    }
+
+    func setThermalCeilingTemp(_ temp: Double) {
+        let snapped = round(temp / 5.0) * 5.0
+        thermalCeilingTemp = snapped
+        systemPreset = .none
+        onSafetyPolicyChange?(safetyPolicy, snapped)
+    }
+
     func selectProfile(_ newProfile: FanProfile) {
+        systemPreset = .none
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
         profile = newProfile
-        onProfileChange?(newProfile, profile == .custom ? customPercent : nil)
+        notifyChange()
+    }
+
+    func selectAdaptiveSubProfile(_ newSubProfile: AdaptiveSubProfile) {
+        systemPreset = .none
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
+        adaptiveSubProfile = newSubProfile
+        UserDefaults.standard.set(newSubProfile.rawValue, forKey: defaultsKeySubProfile)
+        notifyChange()
     }
 
     func setCustomPercent(_ pct: Double, immediate: Bool = false) {
+        systemPreset = .none
         let snapped = round(pct / 5.0) * 5.0
         customPercent = snapped
 
         debounceWorkItem?.cancel()
         if immediate {
             debounceWorkItem = nil
-            onProfileChange?(.custom, snapped)
+            notifyChange()
         } else {
             let workItem = DispatchWorkItem { [weak self] in
-                guard let self = self else { return }
-                self.onProfileChange?(.custom, snapped)
+                self?.notifyChange()
             }
             debounceWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
         }
+    }
+
+    func updateCurveAnchorRPM(temp: Double, rpm: Double, immediate: Bool = false) {
+        systemPreset = .none
+        guard let idx = customCurveAnchors.firstIndex(where: { Int($0.temp) == Int(temp) }) else { return }
+        let clamped = max(0, min(100, round(rpm / 5.0) * 5.0))
+        customCurveAnchors[idx].rpmPercent = clamped
+        if let data = try? JSONEncoder().encode(customCurveAnchors) {
+            UserDefaults.standard.set(data, forKey: defaultsKeyAnchors)
+        }
+        debounceWorkItem?.cancel()
+        if immediate {
+            debounceWorkItem = nil
+            notifyChange()
+        } else {
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.notifyChange()
+            }
+            debounceWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        }
+    }
+
+    func resetCurveToRecommended() {
+        customCurveAnchors = [
+            CurveMilestone(temp: 45, rpmPercent: 20, label: "Cool"),
+            CurveMilestone(temp: 60, rpmPercent: 35, label: "Warm"),
+            CurveMilestone(temp: 75, rpmPercent: 60, label: "Hot"),
+            CurveMilestone(temp: 88, rpmPercent: 90, label: "Max")
+        ]
+        if let data = try? JSONEncoder().encode(customCurveAnchors) {
+            UserDefaults.standard.set(data, forKey: defaultsKeyAnchors)
+        }
+        notifyChange()
+    }
+
+    private func notifyChange() {
+        onProfileChange?(
+            profile,
+            profile == .manual ? customPercent : nil,
+            adaptiveSubProfile,
+            flattenedCurvePoints
+        )
     }
 }
 
@@ -158,7 +354,9 @@ struct LastCalibrationRecord: Equatable {
 final class PowerViewModel: ObservableObject {
     @Published var alwaysOn: Bool = false
     @Published var daemonsSuspended: Bool = false
+    @Published var daemonsSafetyCeilingEnabled: Bool = true
     @Published var daemonsFailsafeTriggered: Bool = false
+    @Published var daemonsFailsafeReason: String = ""
     @Published var chargeLimit: Int = 80
     @Published var limitEnabled: Bool = false
     @Published var sailingDiff: Int = 4
@@ -172,9 +370,12 @@ final class PowerViewModel: ObservableObject {
     @Published var lastCalibration: LastCalibrationRecord?
     @Published var hardwareControlSupported: Bool = true
     @Published var nativeChargeLimitAvailable: Bool = false
+    @Published var batteryHealthPercent: Double?
+    @Published var batteryTier: BatteryControlTier = .systemManaged
 
     var onAlwaysOnToggle: ((Bool) -> Void)?
     var onDaemonsToggle: ((Bool) -> Void)?
+    var onDaemonsSafetyCeilingToggle: ((Bool) -> Void)?
     var onBatteryLimitChange: ((Int, Bool) -> Void)?
     var onBatteryLimitAdvancedChange: ((Int, Bool, Int) -> Void)?
     var onTopUpToggle: ((Bool) -> Void)?
@@ -187,8 +388,12 @@ final class PowerViewModel: ObservableObject {
         if alwaysOn != ao { alwaysOn = ao }
         let ds = hostDict["daemons_suspended"] as? Bool ?? false
         if daemonsSuspended != ds { daemonsSuspended = ds }
+        let dsc = hostDict["daemons_safety_ceiling_enabled"] as? Bool ?? true
+        if daemonsSafetyCeilingEnabled != dsc { daemonsSafetyCeilingEnabled = dsc }
         let dft = hostDict["daemons_failsafe_triggered"] as? Bool ?? false
         if daemonsFailsafeTriggered != dft { daemonsFailsafeTriggered = dft }
+        let dfr = hostDict["daemons_failsafe_reason"] as? String ?? ""
+        if daemonsFailsafeReason != dfr { daemonsFailsafeReason = dfr }
     }
 
     func updateBatteryState(batteryDict: [String: Any]) {
@@ -220,11 +425,21 @@ final class PowerViewModel: ObservableObject {
             lastCalibration = nil
         }
 
+        if let hp = batteryDict["healthPercent"] as? Double {
+            if batteryHealthPercent != hp { batteryHealthPercent = hp }
+        }
+
         if let hcs = batteryDict["hardwareControlSupported"] as? Bool, hardwareControlSupported != hcs {
             hardwareControlSupported = hcs
         }
         if let ncl = batteryDict["nativeChargeLimitAvailable"] as? Bool, nativeChargeLimitAvailable != ncl {
             nativeChargeLimitAvailable = ncl
+        }
+
+        let present = batteryDict["present"] as? Bool ?? (batteryDict["chargePercent"] != nil)
+        let resolvedTier: BatteryControlTier = !present ? .desktopNoBattery : (hardwareControlSupported ? .directSMC : .systemManaged)
+        if batteryTier != resolvedTier {
+            batteryTier = resolvedTier
         }
     }
 
@@ -236,6 +451,11 @@ final class PowerViewModel: ObservableObject {
     func toggleDaemons(_ on: Bool) {
         daemonsSuspended = on
         onDaemonsToggle?(on)
+    }
+
+    func toggleDaemonsSafetyCeiling(_ enabled: Bool) {
+        daemonsSafetyCeilingEnabled = enabled
+        onDaemonsSafetyCeilingToggle?(enabled)
     }
 
     func setChargeLimit(_ limit: Int, enabled: Bool) {

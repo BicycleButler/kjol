@@ -4,13 +4,9 @@
 **Last Updated:** 2026-08-25
 **Source:** `scratch/OPTIMIZATION_RESEARCH.md` + Requirements Specification
 
----
-
 ## Overview
 
 This task list defines the actionable implementation plan for optimizing Kjol, modernizing its architecture, fixing security gaps, removing UI jank, updating test infrastructure, and providing single-file distribution & in-app updates.
-
----
 
 ## Phase 1: Correctness, Security & Quick Wins
 
@@ -21,10 +17,10 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
   - **Implementation Plan:**
     1. Move fan profile re-application logic out of `getFanStatus` into `setFanProfile` and daemon startup initialization.
     2. Cache active profile state in `stateCache`.
-    3. Ensure `getFanStatus` strictly reads and returns fan telemetry.
+    3. Make sure that `getFanStatus` strictly reads and returns fan telemetry.
   - **Acceptance Criteria:**
     - `getFanStatus` triggers zero SMC key write calls.
-    - Manual fan profile persists across daemon restarts via startup re-application.
+    - Manual fan profile persists across daemon restarts through startup re-application.
 
 - [x] **Task 1.2 (t-04): Add XPC Listener Security Delegate**
   - **Priority:** P0
@@ -71,8 +67,6 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
   - **Acceptance Criteria:**
     - Clean compilation with no deprecation warnings for power assertions.
 
----
-
 ## Phase 2: IPC Optimization & Timer Modernization
 
 - [x] **Task 2.1 (t-02): Merge `getStatus` and `getFanStatus` into One XPC Call**
@@ -99,8 +93,6 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
     - Polling runs with OS wake-up coalescing.
     - Automatic state refresh upon helper daemon restart.
 
----
-
 ## Phase 3: Structural Refactoring & SwiftUI State Architecture
 
 - [x] **Task 3.1 (t-05): Split Host God Class & Refactor SwiftUI View State (Fix UI Jank)**
@@ -120,7 +112,7 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
        - Split view models into focused state holders (`TelemetryViewModel`, `FanControlViewModel`, `PowerViewModel`).
        - Apply `sizingOptions = []` on `NSHostingController` (macOS 13+) and fixed `preferredContentSize` (360x490) to eliminate NSPopover frame jumping.
        - Replace layout-shifting view modifiers (such as `.opacity()`) with explicit `if/else` conditional rendering.
-       - Use fixed `.frame()` dimensions on view containers and card slots to avoid secondary layout passes.
+       - Use fixed `.frame()` dimensions on view containers and card slots to prevent secondary layout passes.
        - Rely strictly on native `show(relativeTo:of:)` positioning without manual frame recalculation overrides.
   - **Acceptance Criteria:**
     - `Host` reduced to a lightweight coordinator (~80 lines).
@@ -142,8 +134,6 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
     - Async/await used cleanly across XPC client.
     - Robust connection recovery without UI thread blocking.
 
----
-
 ## Phase 4: Polish, Distribution Readiness & Test Cleanup
 
 - [x] **Task 4.1 (t-07): Pre-allocate CpuSampler Buffers**
@@ -161,7 +151,7 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
   - **Target File:** `build-kjol.sh`
   - **Problem:** Code signing order and options must consistently preserve ad-hoc signatures across executables and app bundle.
   - **Implementation Plan:**
-    1. Ensure bottom-up signing sequence in `build-kjol.sh`:
+    1. Make sure that bottom-up signing sequence in `build-kjol.sh`:
        - Helper daemon binary (`codesign -f -s - --options runtime "$HELPER_DIR/com.lappier.kjol.helper"`)
        - Main app binary (`codesign -f -s - --options runtime "$APP_DIR/Contents/MacOS/Kjol"`)
        - Outer app bundle (`codesign -f -s - --options runtime "$APP_DIR"`)
@@ -178,7 +168,7 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
     - `test_leak.swift` is in root directory instead of `tests/`.
   - **Implementation Plan:**
     1. Relocate `test_leak.swift` to `tests/test_leak.swift`.
-    2. Update `tests/mode-test.swift` and `tests/xpc-test.swift` to match modernized `KjolHelperProtocol` (`getCombinedStatus`, `setAlwaysOn`, `setFanProfile`, etc.) and remove deprecated `setPowerMode`.
+    2. Update `tests/mode-test.swift` and `tests/xpc-test.swift` to match modernized `KjolHelperProtocol` (`getCombinedStatus`, `setAlwaysOn`, `setFanProfile`, and so on.) and remove deprecated `setPowerMode`.
     3. Verify test scripts compile and run cleanly against built binaries.
   - **Acceptance Criteria:**
     - All scripts under `tests/` compile and execute without protocol errors.
@@ -189,11 +179,9 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
   - **Problem:** `KjolHelperProtocol.swift` duplicated into `Kjol/Resources/` during build.
   - **Implementation Plan:**
     1. Consolidate protocol into single source path (`KjolHelper/KjolHelperProtocol.swift`).
-    2. Update `build-kjol.sh` to compile directly from source path for both helper and app targets.
+    2. Update `build-kjol.sh` to compile directly from source path for the two helper and app targets.
   - **Acceptance Criteria:**
     - Single protocol source file used across all targets.
-
----
 
 ## Phase 5: Distribution & In-App Updater Implementation (Wiltermoodj/kjol)
 
@@ -229,19 +217,16 @@ This task list defines the actionable implementation plan for optimizing Kjol, m
   - **Target Files:** `build-kjol.sh`, `README.md`, `scratch/DISTRIBUTION_PLAN.md`
   - **Problem:** Non-technical users need simple instructions for opening ad-hoc signed installer packages without terminal commands.
   - **Implementation Plan:**
-    1. Ensure `build-kjol.sh` builds a single `Kjol.pkg` executable without external dependencies.
+    1. Make sure that `build-kjol.sh` builds a single `Kjol.pkg` executable without external dependencies.
     2. Update `README.md` with step-by-step instructions for non-technical users on how to install `Kjol.pkg` and bypass Gatekeeper ("Right-Click -> Open").
   - **Acceptance Criteria:**
     - README includes simple, non-technical instructions for single-file installation and update process.
 
----
-
 ## Progress Summary
 
-| Phase | Tasks | Status |
-|---|---|---|
-| **Phase 1: Correctness & Security** | 1.1, 1.2, 1.3, 1.4, 1.5 | Completed |
-| **Phase 2: IPC & Timer Modernization** | 2.1, 2.2 | Completed |
-| **Phase 3: Refactoring & UI State** | 3.1, 3.2 | Completed |
-| **Phase 4: Polish & Test Cleanup** | 4.1, 4.2, 4.3, 4.4 | Completed |
-| **Phase 5: Distribution & In-App Updater** | 5.1, 5.2, 5.3 | Completed |
+- Phase | Tasks | Status
+- **Phase 1: Correctness & Security** | 1.1, 1.2, 1.3, 1.4, 1.5 | Completed
+- **Phase 2: IPC & Timer Modernization** | 2.1, 2.2 | Completed
+- **Phase 3: Refactoring & UI State** | 3.1, 3.2 | Completed
+- **Phase 4: Polish & Test Cleanup** | 4.1, 4.2, 4.3, 4.4 | Completed
+- **Phase 5: Distribution & In-App Updater** | 5.1, 5.2, 5.3 | Completed

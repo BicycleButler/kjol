@@ -91,3 +91,6 @@ build.old/
 !build/Kjol.pkg
 *.dmg
 
+# stubs framework
+.stubs/graph.sqlite*
+.stubs/*.sqlite

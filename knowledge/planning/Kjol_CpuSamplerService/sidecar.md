@@ -25,7 +25,7 @@ status: complete
 **Reviewer:** I agree with keeping CpuSamplerService as-is.
 **Verdict:** Agree
 **Reasoning:** The sampler has a focused single responsibility—collecting P/E core samples—and adding indirection for a small service type would hurt readability. Without evidence of testing pain or duplication, splitting now is speculative.
-**Risk:** If CPU sampling requirements grow later, the file may become a maintenance bottleneck and require structural change anyway.
+**Risk:** If CPU sampling requirements grow later, the file can become a maintenance bottleneck and require structural change anyway.
 
 <!--83ce6b70_R_Q1_DONE-->
 <!--83ce6b70_GM_Q1_DONE-->

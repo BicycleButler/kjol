@@ -381,6 +381,10 @@ final class BatteryController {
     private(set) var heatProtectionActive = false
 
     var hardwareControlSupported: Bool {
+        // macOS 27 and newer restrict direct third-party SMC battery charge writes.
+        if #available(macOS 27.0, *) {
+            return false
+        }
         return smc.hasKey("CHTE") || smc.hasKey("CH0B") || smc.hasKey("CH0C") || smc.hasKey("BCLM")
     }
 

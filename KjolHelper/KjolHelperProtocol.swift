@@ -44,6 +44,8 @@ public protocol KjolHelperProtocol {
 
     func suspendDaemons(_ on: Bool, reply: @escaping (Bool, NSError?) -> Void)
 
+    func setDaemonSafetyCeiling(_ enabled: Bool, reply: @escaping (Bool, NSError?) -> Void)
+
     func getStatus(reply: @escaping ([String: Any]?, NSError?) -> Void)
 
     func getFanStatus(reply: @escaping ([String: Any]?, NSError?) -> Void)
@@ -51,6 +53,12 @@ public protocol KjolHelperProtocol {
     func getCombinedStatus(reply: @escaping ([String: Any]?, NSError?) -> Void)
 
     func setFanProfile(_ profile: String, rpmPercent: Double, targetTempC: Double, reply: @escaping (Bool, NSError?) -> Void)
+
+    func setFanAdaptiveProfile(subProfile: String, curvePoints: [Double], reply: @escaping (Bool, NSError?) -> Void)
+
+    func setThermalSafetyPolicy(policy: String, ceilingTempC: Double, reply: @escaping (Bool, NSError?) -> Void)
+
+    func setSystemPreset(preset: String, reply: @escaping (Bool, NSError?) -> Void)
 
     func setBatteryLimit(_ limit: Int, enabled: Bool, reply: @escaping (Bool, NSError?) -> Void)
 

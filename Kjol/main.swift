@@ -42,36 +42,195 @@ enum Design {
     }
 }
 
+enum TooltipPlacement {
+    case top
+    case bottom
+}
+
+struct KjolTooltipModifier: ViewModifier {
+    let title: String
+    let description: String
+    var placement: TooltipPlacement = .bottom
+    var delay: Double = 0.2
+
+    @State private var isHovered: Bool = false
+    @State private var showTooltip: Bool = false
+    @State private var hoverWorkItem: DispatchWorkItem?
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                isHovered = hovering
+                hoverWorkItem?.cancel()
+                if hovering {
+                    let item = DispatchWorkItem {
+                        if self.isHovered {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                self.showTooltip = true
+                            }
+                        }
+                    }
+                    hoverWorkItem = item
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.1)) {
+                        self.showTooltip = false
+                    }
+                }
+            }
+            .overlay(alignment: placement == .bottom ? .bottom : .top) {
+                if showTooltip {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(SwiftUI.Color.white)
+                        if !description.isEmpty {
+                            Text(description)
+                                .font(.system(size: 9.5, weight: .regular))
+                                .foregroundStyle(SwiftUI.Color.white.opacity(0.88))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: 260, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(SwiftUI.Color(NSColor.black).opacity(0.92))
+                            .shadow(color: SwiftUI.Color.black.opacity(0.3), radius: 6, x: 0, y: 3)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(SwiftUI.Color.white.opacity(0.18), lineWidth: 0.5)
+                    )
+                    .offset(y: placement == .bottom ? 34 : -34)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .zIndex(9999)
+                    .allowsHitTesting(false)
+                }
+            }
+            .help(description.isEmpty ? title : "\(title): \(description)")
+    }
+}
+
+extension View {
+    func kjolTooltip(title: String, description: String = "", placement: TooltipPlacement = .bottom) -> some View {
+        modifier(KjolTooltipModifier(title: title, description: description, placement: placement))
+    }
+}
+
 enum FanProfile: String, CaseIterable, Identifiable {
-    case auto, quiet, adaptive, blast, custom
+    case auto, adaptive, manual, blast
     var id: String { rawValue }
     var title: String {
         switch self {
         case .auto: return "Auto"
-        case .quiet: return "Quiet"
         case .adaptive: return "Adaptive"
+        case .manual: return "Manual"
         case .blast: return "Blast"
-        case .custom: return "Custom"
         }
     }
     var icon: String {
         switch self {
         case .auto: return "sparkles"
-        case .quiet: return "leaf.fill"
         case .adaptive: return "waveform.path.ecg"
+        case .manual: return "slider.horizontal.3"
         case .blast: return "flame.fill"
-        case .custom: return "slider.horizontal.3"
         }
     }
     var badgeText: String {
         switch self {
         case .auto: return "Native"
-        case .quiet: return "25%"
-        case .adaptive: return "Predictive"
+        case .adaptive: return "Dynamic"
+        case .manual: return "Fixed"
         case .blast: return "100%"
-        case .custom: return "Manual"
         }
     }
+}
+
+enum AdaptiveSubProfile: String, CaseIterable, Identifiable {
+    case gentle, aggressive, custom
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .gentle: return "Gentle"
+        case .aggressive: return "Compute"
+        case .custom: return "Custom"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .gentle: return "leaf.fill"
+        case .aggressive: return "bolt.fill"
+        case .custom: return "chart.xyaxis.line"
+        }
+    }
+    var summary: String {
+        switch self {
+        case .gentle: return "Cool Native • Whisper quiet with +15% cooling headroom"
+        case .aggressive: return "Heavy Compute • Proactive thermal acceleration & peak hold"
+        case .custom: return "Interactive Multi-Point Thermal Curve"
+        }
+    }
+}
+
+enum SystemPreset: String, CaseIterable, Identifiable {
+    case maxCompute, gentle, none
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .maxCompute: return "Max Compute"
+        case .gentle: return "Gentle Silent"
+        case .none: return "Custom"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .maxCompute: return "bolt.fill"
+        case .gentle: return "leaf.fill"
+        case .none: return "slider.horizontal.3"
+        }
+    }
+    var badge: String {
+        switch self {
+        case .maxCompute: return "Full Turbo • Dynamic Fans"
+        case .gentle: return "Low Power • <25% Fans • <75°C"
+        case .none: return "Manual / Custom Settings"
+        }
+    }
+}
+
+enum ThermalSafetyPolicy: String, CaseIterable, Identifiable {
+    case off, boostFans, throttleCPU
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .boostFans: return "Fan Boost"
+        case .throttleCPU: return "Throttle CPU"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .off: return "shield.slash"
+        case .boostFans: return "wind"
+        case .throttleCPU: return "gauge.with.dots.needle.50percent"
+        }
+    }
+    var summary: String {
+        switch self {
+        case .off: return "Passive SMC failsafes only"
+        case .boostFans: return "Performance Priority • Reverts fans to native SMC if ceiling is breached"
+        case .throttleCPU: return "Acoustic Priority • Engages Low Power Mode to contain heat and preserve silence"
+        }
+    }
+}
+
+struct CurveMilestone: Identifiable, Equatable, Codable {
+    var id: Int { Int(temp) }
+    var temp: Double
+    var rpmPercent: Double
+    var label: String
 }
 
 struct FanReading: Equatable, Identifiable {
@@ -162,20 +321,31 @@ struct HeaderView: View {
 
     var body: some View {
         HStack(spacing: Design.Spacing.space2) {
-            if let motif = bundleImage("clamshell-motif.jpg") {
-                motif
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 18, height: 18)
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            } else {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: Design.Icon.action))
-                    .foregroundStyle(Design.Color.accent)
+            // Left: App Motif / Icon & Title
+            HStack(spacing: 6) {
+                if let motif = bundleImage("clamshell-motif.jpg") {
+                    motif
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 18, height: 18)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                } else {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: Design.Icon.action))
+                        .foregroundStyle(Design.Color.accent)
+                }
+                Text("Kjol")
+                    .font(Design.Typography.base)
             }
-            Text("Kjol")
-                .font(Design.Typography.base)
-            Spacer(minLength: 0)
+
+            Spacer(minLength: 8)
+
+            // Center-Right: Three-option Preset Toggle Bar with Fan Icon on Left
+            headerPresetToggleBar
+
+            Spacer(minLength: 8)
+
+            // Right: Busy Indicator & Helper Status Badge
             if host.busy {
                 ProgressView()
                     .controlSize(.small)
@@ -189,7 +359,86 @@ struct HeaderView: View {
                     in: Capsule()
                 )
                 .foregroundStyle(host.helperInstalled ? Design.Color.accent : Design.Color.warning)
+                .kjolTooltip(
+                    title: host.helperInstalled ? "Privileged Helper Active" : "Privileged Helper Required",
+                    description: host.helperInstalled
+                        ? "Root daemon is connected and active. Managing SMC hardware keys and system power policies."
+                        : "Kjol requires the background daemon for privileged hardware operations. Please run the installer package."
+                )
         }
+    }
+
+    private var headerPresetToggleBar: some View {
+        HStack(spacing: 6) {
+            // Fan icon always in color on the left of the toggle bar
+            Image(systemName: "fanblades.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Design.Color.accent)
+                .kjolTooltip(
+                    title: "Cooling Presets",
+                    description: "Select system-wide acoustic and thermal performance preset"
+                )
+
+            // Segmented toggle bar with three icons in strict order: gentle, custom, max compute
+            HStack(spacing: 2) {
+                headerPresetSegment(
+                    preset: .gentle,
+                    icon: "leaf.fill",
+                    title: "Gentle Silent",
+                    tooltip: "Low Power Mode • Whisper-quiet fans (<25%) • <75°C target"
+                )
+                headerPresetSegment(
+                    preset: .none, // Custom
+                    icon: "slider.horizontal.3",
+                    title: "Custom",
+                    tooltip: "Manual / Custom thermal curves and user-defined fan targets"
+                )
+                headerPresetSegment(
+                    preset: .maxCompute,
+                    icon: "bolt.fill",
+                    title: "Max Compute",
+                    tooltip: "Full Turbo compute • Active thermal acceleration & dynamic cooling"
+                )
+            }
+            .padding(2)
+            .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(SwiftUI.Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Design.Color.cardBackground.opacity(0.9), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(SwiftUI.Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func headerPresetSegment(preset: SystemPreset, icon: String, title: String, tooltip: String) -> some View {
+        let isSelected = host.fanControlVM.systemPreset == preset
+        return Button(action: {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                host.fanControlVM.selectSystemPreset(preset)
+            }
+        }) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                .frame(width: 24, height: 18)
+                .background(
+                    isSelected ? Design.Color.accent.opacity(0.25) : SwiftUI.Color.clear,
+                    in: RoundedRectangle(cornerRadius: 4, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(isSelected ? Design.Color.accent.opacity(0.8) : SwiftUI.Color.clear, lineWidth: 1)
+                )
+                .foregroundStyle(isSelected ? Design.Color.accent : Design.Color.secondaryText)
+        }
+        .buttonStyle(.plain)
+        .disabled(host.busy)
+        .kjolTooltip(title: title, description: tooltip)
     }
 }
 
@@ -241,58 +490,22 @@ struct ExpandableSectionHeader: View {
     }
 }
 
-struct QuickActionItem: Identifiable {
-    let id: String
-    let icon: String
-    let activeIcon: String
-    let title: String
-    let isActive: Bool
-    let action: () -> Void
-}
-
-struct QuickActionButton: View {
-    let item: QuickActionItem
-    let disabled: Bool
-
-    @State private var isHovered: Bool = false
-
-    var body: some View {
-        Button(action: item.action) {
-            VStack(spacing: 4) {
-                Image(systemName: item.isActive ? item.activeIcon : item.icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(item.isActive ? Design.Color.accent : (isHovered ? Design.Color.foreground : Design.Color.secondaryText))
-
-                Text(item.title)
-                    .font(.system(size: 10, weight: item.isActive ? .semibold : .medium))
-                    .foregroundStyle(item.isActive ? Design.Color.accent : (isHovered ? Design.Color.foreground : Design.Color.secondaryText))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .background(
-                item.isActive ? Design.Color.accent.opacity(0.18) : (isHovered ? Design.Color.cardBackground.opacity(0.9) : Design.Color.cardBackground),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(
-                        item.isActive
-                            ? Design.Color.accent.opacity(0.65)
-                            : (isHovered ? Design.Color.secondaryText.opacity(0.35) : SwiftUI.Color.primary.opacity(0.08)),
-                        lineWidth: 1
-                    )
-            )
-            .contentShape(Rectangle())
+struct BatterySettingsLauncher {
+    static func openSettings() {
+        // 1. Modern macOS 13+ Battery Settings pane extension
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Battery-Settings.extension"),
+           NSWorkspace.shared.open(url) {
+            return
         }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .onHover { hovering in
-            isHovered = hovering
+        // 2. Legacy Preference Pane URL
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.battery"),
+           NSWorkspace.shared.open(url) {
+            return
+        }
+        // 3. Fallback to System Settings
+        if let url = URL(string: "x-apple.systempreferences:"),
+           NSWorkspace.shared.open(url) {
+            return
         }
     }
 }
@@ -301,46 +514,126 @@ struct QuickActionsBarView: View {
     @ObservedObject var powerVM: PowerViewModel
     @ObservedObject var host: Host
 
-    private var items: [QuickActionItem] {
-        [
-            QuickActionItem(
-                id: "alwaysOn",
-                icon: "cup.and.saucer",
-                activeIcon: "cup.and.saucer.fill",
-                title: "Always On",
-                isActive: powerVM.alwaysOn,
-                action: { powerVM.toggleAlwaysOn(!powerVM.alwaysOn) }
-            ),
-            QuickActionItem(
-                id: "daemons",
-                icon: "pause.circle",
-                activeIcon: "pause.circle.fill",
-                title: "Pause Background\nDaemons",
-                isActive: powerVM.daemonsSuspended,
-                action: { powerVM.toggleDaemons(!powerVM.daemonsSuspended) }
-            ),
-            QuickActionItem(
-                id: "limit",
-                icon: powerVM.hardwareControlSupported ? "bolt.shield" : "gearshape",
-                activeIcon: powerVM.hardwareControlSupported ? "bolt.shield.fill" : "gearshape.fill",
-                title: powerVM.hardwareControlSupported ? "Charge Limit\n\(powerVM.chargeLimit)%" : "macOS Battery\nSettings",
-                isActive: powerVM.hardwareControlSupported ? powerVM.limitEnabled : false,
-                action: {
-                    if powerVM.hardwareControlSupported {
-                        powerVM.setChargeLimit(powerVM.chargeLimit, enabled: !powerVM.limitEnabled)
-                    } else if let url = URL(string: "x-apple.systempreferences:com.apple.preference.battery") {
-                        NSWorkspace.shared.open(url)
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // 1. Always-On Compact Icon Button
+            Button(action: {
+                powerVM.toggleAlwaysOn(!powerVM.alwaysOn)
+            }) {
+                VStack {
+                    Image(systemName: powerVM.alwaysOn ? "cup.and.saucer.fill" : "cup.and.saucer")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(powerVM.alwaysOn ? Design.Color.accent : Design.Color.secondaryText)
+                }
+                .frame(width: 44, height: 44)
+                .background(
+                    powerVM.alwaysOn ? Design.Color.accent.opacity(0.18) : Design.Color.cardBackground,
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(
+                            powerVM.alwaysOn ? Design.Color.accent.opacity(0.65) : SwiftUI.Color.primary.opacity(0.08),
+                            lineWidth: 1
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(host.busy)
+            .kjolTooltip(
+                title: "Always-On",
+                description: "Prevents system sleep and maintains compute and clamshell operation when the lid is closed."
+            )
+
+            // 2. Boost Memory Compact Icon Button & Governor Sub-Control
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Button(action: {
+                        powerVM.toggleDaemons(!powerVM.daemonsSuspended)
+                    }) {
+                        VStack {
+                            Image(systemName: powerVM.daemonsSuspended ? "bolt.badge.automatic.fill" : "bolt.badge.automatic")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(powerVM.daemonsSuspended ? Design.Color.accent : Design.Color.secondaryText)
+                        }
+                        .frame(width: 44, height: 44)
+                        .background(
+                            powerVM.daemonsSuspended ? Design.Color.accent.opacity(0.18) : Design.Color.cardBackground,
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(
+                                    powerVM.daemonsSuspended ? Design.Color.accent.opacity(0.65) : SwiftUI.Color.primary.opacity(0.08),
+                                    lineWidth: 1
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(host.busy)
+                    .kjolTooltip(
+                        title: "Boost Memory",
+                        description: "Suspends non-critical background daemons, demotes indexing, and purges RAM buffers to maximize available compute."
+                    )
+
+                    // Safety Failsafe Alert (if triggered)
+                    if powerVM.daemonsFailsafeTriggered && !powerVM.daemonsSuspended {
+                        Button(action: {
+                            powerVM.toggleDaemons(true)
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Design.Color.warning)
+                                let reason = powerVM.daemonsFailsafeReason == "critical_battery"
+                                    ? "Paused (battery <=8%)"
+                                    : (powerVM.daemonsFailsafeReason == "thermal_critical"
+                                        ? "Paused (heat >=105°C)"
+                                        : "Paused (4h safety limit)")
+                                Text(reason)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Design.Color.warning)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(Design.Color.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .kjolTooltip(
+                            title: "Governor Failsafe Triggered",
+                            description: "Daemons were automatically resumed to protect system stability. Click to re-engage Boost Memory."
+                        )
                     }
                 }
-            )
-        ]
-    }
 
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(items) { item in
-                QuickActionButton(item: item, disabled: host.busy)
+                // Toggle for governor directly underneath Boost Memory button
+                HStack(spacing: 5) {
+                    Image(systemName: powerVM.daemonsSafetyCeilingEnabled ? "timer" : "infinity")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(powerVM.daemonsSuspended ? Design.Color.accent : Design.Color.tertiaryText)
+                    Text(powerVM.daemonsSafetyCeilingEnabled ? "Governor: 4h Limit" : "Governor: Persistent")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(Design.Color.secondaryText)
+                    Toggle("", isOn: Binding(
+                        get: { powerVM.daemonsSafetyCeilingEnabled },
+                        set: { powerVM.toggleDaemonsSafetyCeiling($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .disabled(host.busy)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Design.Color.cardBackground.opacity(0.7), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .kjolTooltip(
+                    title: "Compute Governor Mode",
+                    description: powerVM.daemonsSafetyCeilingEnabled
+                        ? "4h Limit: Automatically resumes background indexing after 4 hours to avoid task backlogs."
+                        : "Persistent Mode: Keeps memory and compute optimizations active indefinitely across multi-day tasks until toggled off."
+                )
             }
+
+            Spacer()
         }
     }
 }
@@ -354,15 +647,45 @@ struct TelemetryCardView: View {
             VStack(spacing: Design.Spacing.space2) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: Design.Spacing.space1) {
-                        metricRow(label: "SoC Temp", value: socTempDisplay)
-                        metricRow(label: "CPU Temp", value: cpuTempDisplay)
-                        metricRow(label: "GPU Temp", value: gpuTempDisplay)
+                        metricRow(
+                            label: "SoC Temp",
+                            value: socTempDisplay,
+                            tipTitle: "SoC Temperature",
+                            tipDesc: "Package junction temperature of the Apple Silicon System-on-Chip."
+                        )
+                        metricRow(
+                            label: "CPU Temp",
+                            value: cpuTempDisplay,
+                            tipTitle: "CPU Temperature",
+                            tipDesc: "Filtered average temperature across active Performance and Efficiency cores."
+                        )
+                        metricRow(
+                            label: "GPU Temp",
+                            value: gpuTempDisplay,
+                            tipTitle: "GPU Temperature",
+                            tipDesc: "Junction temperature reading from the integrated graphics silicon cluster."
+                        )
                     }
                     Spacer(minLength: Design.Spacing.space2)
                     VStack(alignment: .leading, spacing: Design.Spacing.space1) {
-                        metricRow(label: "P-Cores (\(telemetryVM.pCoreCount))", value: pCoreDisplay)
-                        metricRow(label: "E-Cores (\(telemetryVM.eCoreCount))", value: eCoreDisplay)
-                        metricRow(label: "Battery", value: batteryDisplay)
+                        metricRow(
+                            label: "P-Cores (\(telemetryVM.pCoreCount))",
+                            value: pCoreDisplay,
+                            tipTitle: "Performance Cores",
+                            tipDesc: "Aggregated utilization across \(telemetryVM.pCoreCount) high-performance execution cores."
+                        )
+                        metricRow(
+                            label: "E-Cores (\(telemetryVM.eCoreCount))",
+                            value: eCoreDisplay,
+                            tipTitle: "Efficiency Cores",
+                            tipDesc: "Aggregated utilization across \(telemetryVM.eCoreCount) energy-efficient background cores."
+                        )
+                        metricRow(
+                            label: "Battery",
+                            value: batteryDisplay,
+                            tipTitle: "Battery State",
+                            tipDesc: "Current charge percentage, power source connection, and charging status."
+                        )
                     }
                 }
 
@@ -406,10 +729,10 @@ struct TelemetryCardView: View {
                             .foregroundStyle(Design.Color.tertiaryText)
 
                         HStack(spacing: 4) {
-                            sensorTag(name: "SoC", temp: telemetryVM.socTemp)
-                            sensorTag(name: "CPU", temp: telemetryVM.cpuTemp)
-                            sensorTag(name: "GPU", temp: telemetryVM.gpuTemp)
-                            sensorTag(name: "Battery", temp: telemetryVM.batteryTemp)
+                            sensorTag(name: "SoC", temp: telemetryVM.socTemp, tipDesc: "System-on-Chip package die temperature sensor.")
+                            sensorTag(name: "CPU", temp: telemetryVM.cpuTemp, tipDesc: "Central processing unit cluster thermal diode.")
+                            sensorTag(name: "GPU", temp: telemetryVM.gpuTemp, tipDesc: "Graphics cluster thermal diode.")
+                            sensorTag(name: "Battery", temp: telemetryVM.batteryTemp, tipDesc: "Battery pack internal thermistor sensor.")
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -418,7 +741,7 @@ struct TelemetryCardView: View {
         }
     }
 
-    private func metricRow(label: String, value: String) -> some View {
+    private func metricRow(label: String, value: String, tipTitle: String, tipDesc: String) -> some View {
         HStack(spacing: Design.Spacing.space1) {
             Text(label)
                 .font(Design.Typography.xs)
@@ -430,6 +753,11 @@ struct TelemetryCardView: View {
                 .foregroundStyle(Design.Color.foreground)
                 .frame(minWidth: 44, alignment: .trailing)
         }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(Design.Color.background.opacity(0.4), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .contentShape(Rectangle())
+        .kjolTooltip(title: tipTitle, description: tipDesc)
     }
 
     private func coreMeterRow(label: String, usage: Double, isPCore: Bool) -> some View {
@@ -459,9 +787,14 @@ struct TelemetryCardView: View {
         .padding(.horizontal, 4)
         .padding(.vertical, 3)
         .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .contentShape(Rectangle())
+        .kjolTooltip(
+            title: isPCore ? "Performance Core \(label)" : "Efficiency Core \(label)",
+            description: "Live CPU utilization for core \(label): \(Int(usage * 100))%."
+        )
     }
 
-    private func sensorTag(name: String, temp: Double?) -> some View {
+    private func sensorTag(name: String, temp: Double?, tipDesc: String) -> some View {
         VStack(spacing: 2) {
             Text(name)
                 .font(.system(size: 10, weight: .medium))
@@ -474,6 +807,8 @@ struct TelemetryCardView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 4)
         .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .contentShape(Rectangle())
+        .kjolTooltip(title: "\(name) Sensor", description: tipDesc)
     }
 
     private var socTempDisplay: String {
@@ -540,6 +875,7 @@ struct HelperMissingCardView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(host.busy)
+                .kjolTooltip(title: "Retry Helper Connection", description: "Re-checks LaunchDaemon registration and XPC socket connectivity.")
             }
         }
     }
@@ -550,14 +886,31 @@ struct FanControlCardView: View {
     @ObservedObject var telemetryVM: TelemetryViewModel
     @ObservedObject var host: Host
 
-    private var isCustom: Bool {
-        fanVM.profile == .custom
+    private var isManual: Bool {
+        fanVM.profile == .manual
+    }
+
+    private var isAdaptive: Bool {
+        fanVM.profile == .adaptive
+    }
+
+    private var effectiveTemp: Double? {
+        let s = telemetryVM.socTemp ?? 0
+        let c = telemetryVM.cpuTemp ?? 0
+        let m = max(s, c)
+        return m > 0 ? m : nil
     }
 
     var body: some View {
         CardContainer(title: "Fan Control Strategy", backgroundResource: "fan-header.jpg") {
             VStack(alignment: .leading, spacing: Design.Spacing.space2) {
-                // Single-Row Segmented Profile Control
+                // 1. Thermal Posture (promoted to header area with 200ms tooltips)
+                thermalPostureSection
+
+                Divider()
+                    .padding(.vertical, 2)
+
+                // 2. Single-Row Segmented Profile Control (Auto, Adaptive, Manual, Blast)
                 HStack(spacing: 3) {
                     ForEach(FanProfile.allCases) { profile in
                         fanProfileSegment(profile)
@@ -570,11 +923,40 @@ struct FanControlCardView: View {
                         .stroke(SwiftUI.Color.primary.opacity(0.06), lineWidth: 1)
                 )
 
-                // Custom Slider Section (collapsible / animated)
-                if isCustom {
+                // 3. Adaptive Sub-options Section
+                if isAdaptive {
+                    VStack(alignment: .leading, spacing: 6) {
+                        // Sub-profile pills
+                        HStack(spacing: 3) {
+                            ForEach(AdaptiveSubProfile.allCases) { sub in
+                                adaptiveSubProfilePill(sub)
+                            }
+                        }
+                        .padding(2)
+                        .background(Design.Color.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                        // Sub-profile specific view
+                        if fanVM.adaptiveSubProfile == .custom {
+                            CustomCurveEditorView(
+                                fanVM: fanVM,
+                                currentTemp: effectiveTemp,
+                                disabled: host.busy
+                            )
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        } else {
+                            adaptivePresetCard(fanVM.adaptiveSubProfile)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                    .padding(.top, 2)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                // 4. Manual Fixed Slider Section
+                if isManual {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: Design.Spacing.space2) {
-                            Text("Target Speed")
+                            Text("Fixed Speed Target")
                                 .font(Design.Typography.xs)
                                 .foregroundStyle(Design.Color.secondaryText)
                             Spacer()
@@ -599,6 +981,10 @@ struct FanControlCardView: View {
                             }
                         )
                         .disabled(host.busy)
+                        .kjolTooltip(
+                            title: "Fixed Fan Target",
+                            description: "Manually locks all fans to this target percentage speed."
+                        )
 
                         // Quick Snap Chips
                         HStack(spacing: 4) {
@@ -612,7 +998,7 @@ struct FanControlCardView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // Live Per-Fan RPM Status Badges
+                // 5. Live Per-Fan RPM Status Badges
                 if !telemetryVM.fans.isEmpty {
                     Divider()
                         .padding(.vertical, 2)
@@ -637,6 +1023,10 @@ struct FanControlCardView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .kjolTooltip(
+                                title: "Fan \(fan.index + 1) Tachometer",
+                                description: "Actual speed: \(Int(fan.actualRPM)) RPM • Target: \(Int(fan.targetRPM)) RPM • Range: \(Int(fan.minRPM))–\(Int(fan.maxRPM)) RPM • Mode: \(fan.mode == 1 ? "Manual/Controlled" : "Auto/Firmware")"
+                            )
                         }
                         Spacer()
                     }
@@ -645,8 +1035,147 @@ struct FanControlCardView: View {
         }
     }
 
+    private var thermalPostureSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Label("Thermal Posture", systemImage: "shield.lefthalf.filled")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Design.Color.foreground)
+                    .kjolTooltip(
+                        title: "Thermal Posture",
+                        description: "Select active hardware protection policy to govern fans and CPU when heat rises."
+                    )
+                Spacer()
+                if fanVM.isThrottlingEngaged {
+                    HStack(spacing: 3) {
+                        Circle().fill(SwiftUI.Color.orange).frame(width: 5, height: 5)
+                        Text("Throttling Active")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(SwiftUI.Color.orange)
+                    }
+                    .kjolTooltip(
+                        title: "CPU Throttling Active",
+                        description: "Low Power Mode has engaged to cool down temperature while preserving silence."
+                    )
+                } else if fanVM.isFanBoostEngaged {
+                    HStack(spacing: 3) {
+                        Circle().fill(SwiftUI.Color.cyan).frame(width: 5, height: 5)
+                        Text("Fan Boost Active")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(SwiftUI.Color.cyan)
+                    }
+                    .kjolTooltip(
+                        title: "Emergency Fan Boost Active",
+                        description: "Fans have reverted to native SMC maximum speeds to cool junction temperatures."
+                    )
+                }
+            }
+
+            // Policy segmented pills (Off, Fan Boost, Throttle CPU) with 200ms tooltips
+            HStack(spacing: 3) {
+                safetyPolicyPill(
+                    .off,
+                    tipTitle: "Thermal Posture: Off",
+                    tipDesc: "Passive SMC firmware failsafes only. No automatic software intervention."
+                )
+                safetyPolicyPill(
+                    .boostFans,
+                    tipTitle: "Thermal Posture: Fan Boost",
+                    tipDesc: "Performance Priority: Reverts fans to native SMC emergency speeds if ceiling temperature is breached."
+                )
+                safetyPolicyPill(
+                    .throttleCPU,
+                    tipTitle: "Thermal Posture: Throttle CPU",
+                    tipDesc: "Acoustic Priority: Engages Low Power Mode to contain heat while preserving silence."
+                )
+            }
+            .padding(2)
+            .background(Design.Color.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            // Ceiling slider (if not off)
+            if fanVM.safetyPolicy != .off {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(fanVM.safetyPolicy == .throttleCPU ? "Throttle Threshold" : "Emergency Boost Threshold")
+                            .font(Design.Typography.xs)
+                            .foregroundStyle(Design.Color.secondaryText)
+                        Spacer()
+                        Text("\(Int(fanVM.thermalCeilingTemp))°C")
+                            .font(Design.Typography.xsMono)
+                            .bold()
+                            .foregroundStyle(Design.Color.foreground)
+                    }
+
+                    Slider(
+                        value: Binding(
+                            get: { fanVM.thermalCeilingTemp },
+                            set: { fanVM.setThermalCeilingTemp($0) }
+                        ),
+                        in: 70...100,
+                        step: 5
+                    )
+                    .disabled(host.busy)
+                    .kjolTooltip(
+                        title: "Threshold Temperature",
+                        description: "Temperature at which the selected thermal posture policy engages (\(Int(fanVM.thermalCeilingTemp))°C)."
+                    )
+
+                    Text(fanVM.safetyPolicy.summary)
+                        .font(.system(size: 8.5))
+                        .foregroundStyle(Design.Color.tertiaryText)
+                }
+                .padding(6)
+                .background(Design.Color.background.opacity(0.4), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func safetyPolicyPill(_ policy: ThermalSafetyPolicy, tipTitle: String, tipDesc: String) -> some View {
+        let isSelected = fanVM.safetyPolicy == policy
+        return Button(action: {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                fanVM.setThermalSafetyPolicy(policy)
+            }
+        }) {
+            HStack(spacing: 3) {
+                Image(systemName: policy.icon)
+                    .font(.system(size: 8.5))
+                Text(policy.title)
+                    .font(.system(size: 9, weight: isSelected ? .semibold : .regular))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .background(
+                isSelected ? Design.Color.accent.opacity(0.2) : SwiftUI.Color.clear,
+                in: RoundedRectangle(cornerRadius: 4, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .stroke(isSelected ? Design.Color.accent.opacity(0.7) : SwiftUI.Color.clear, lineWidth: 1)
+            )
+            .foregroundStyle(isSelected ? Design.Color.accent : Design.Color.secondaryText)
+        }
+        .buttonStyle(.plain)
+        .disabled(host.busy)
+        .kjolTooltip(title: tipTitle, description: tipDesc)
+    }
+
     private func fanProfileSegment(_ profile: FanProfile) -> some View {
         let selected = fanVM.profile == profile
+        let (tipTitle, tipDesc): (String, String) = {
+            switch profile {
+            case .auto:
+                return ("Auto Fan Profile", "Delegates fan speed regulation to native macOS AppleSMC firmware.")
+            case .adaptive:
+                return ("Adaptive Fan Profile", "Dynamic temperature curve with predictive thermal acceleration.")
+            case .manual:
+                return ("Manual Fan Profile", "Locks fans to a fixed user-selected percentage speed.")
+            case .blast:
+                return ("Blast Fan Profile", "Forces 100% maximum RPM on all cooling fans.")
+            }
+        }()
+
         return Button(action: {
             withAnimation(.easeInOut(duration: 0.15)) {
                 fanVM.selectProfile(profile)
@@ -673,6 +1202,114 @@ struct FanControlCardView: View {
         }
         .buttonStyle(.plain)
         .disabled(host.busy)
+        .kjolTooltip(title: tipTitle, description: tipDesc)
+    }
+
+    private func adaptiveSubProfilePill(_ sub: AdaptiveSubProfile) -> some View {
+        let selected = fanVM.adaptiveSubProfile == sub
+        let (tipTitle, tipDesc): (String, String) = {
+            switch sub {
+            case .gentle:
+                return ("Cool Native Curve", "Whisper-quiet curve following macOS acoustics with +15% cooler baseline.")
+            case .aggressive:
+                return ("Heavy Compute Curve", "Proactive ΔT/Δt thermal acceleration with 12s peak-hold.")
+            case .custom:
+                return ("Custom Curve", "Interactive 4-milestone spline curve tailored to your preferences.")
+            }
+        }()
+
+        return Button(action: {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                fanVM.selectAdaptiveSubProfile(sub)
+            }
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: sub.icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(sub.title)
+                    .font(.system(size: 10, weight: selected ? .semibold : .regular))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .background(
+                selected ? Design.Color.accent.opacity(0.22) : SwiftUI.Color.clear,
+                in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(selected ? Design.Color.accent.opacity(0.7) : SwiftUI.Color.clear, lineWidth: 1)
+            )
+            .foregroundStyle(selected ? Design.Color.accent : Design.Color.secondaryText)
+        }
+        .buttonStyle(.plain)
+        .disabled(host.busy)
+        .kjolTooltip(title: tipTitle, description: tipDesc)
+    }
+
+    private func adaptivePresetCard(_ sub: AdaptiveSubProfile) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: sub == .gentle ? "leaf.fill" : "bolt.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Design.Color.accent)
+                Text(sub == .gentle ? "Cool Native Curve" : "Heavy Compute Acceleration")
+                    .font(Design.Typography.xs)
+                    .bold()
+                    .foregroundStyle(Design.Color.foreground)
+                Spacer()
+                if let t = effectiveTemp {
+                    Text("\(Int(t))°C")
+                        .font(Design.Typography.xsMono)
+                        .foregroundStyle(Design.Color.tertiaryText)
+                }
+            }
+
+            Text(sub == .gentle
+                 ? "Gentle progressive curve following macOS acoustics with +15% cooler baseline and low-pass 20s smoothing."
+                 : "Proactive ΔT/Δt thermal acceleration with 12s peak-hold for compilation, rendering, and sustained workloads.")
+                .font(.system(size: 9.5))
+                .foregroundStyle(Design.Color.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Milestone preview dots
+            HStack(spacing: 6) {
+                if sub == .gentle {
+                    presetMilestoneBadge(temp: "45°", rpm: "18%")
+                    presetMilestoneBadge(temp: "60°", rpm: "30%")
+                    presetMilestoneBadge(temp: "75°", rpm: "55%")
+                    presetMilestoneBadge(temp: "90°", rpm: "90%")
+                } else {
+                    presetMilestoneBadge(temp: "40°", rpm: "15%")
+                    presetMilestoneBadge(temp: "55°", rpm: "35%")
+                    presetMilestoneBadge(temp: "70°", rpm: "70%")
+                    presetMilestoneBadge(temp: "85°", rpm: "100%")
+                }
+            }
+            .padding(.top, 2)
+        }
+        .padding(8)
+        .background(Design.Color.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(SwiftUI.Color.primary.opacity(0.05), lineWidth: 1)
+        )
+    }
+
+    private func presetMilestoneBadge(temp: String, rpm: String) -> some View {
+        HStack(spacing: 2) {
+            Text(temp)
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Design.Color.secondaryText)
+            Text("→")
+                .font(.system(size: 8))
+                .foregroundStyle(Design.Color.tertiaryText)
+            Text(rpm)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(Design.Color.accent)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 
     private func quickSnapButton(percent: Double) -> some View {
@@ -696,315 +1333,715 @@ struct FanControlCardView: View {
     }
 }
 
+struct CustomCurveCanvasView: View {
+    let anchors: [CurveMilestone]
+    let currentTemp: Double?
+
+    private let minT: Double = 35.0
+    private let maxT: Double = 95.0
+
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+
+            func xPos(_ t: Double) -> CGFloat {
+                let clamped = max(minT, min(maxT, t))
+                return CGFloat((clamped - minT) / (maxT - minT)) * (w - 24) + 12
+            }
+
+            func yPos(_ rpm: Double) -> CGFloat {
+                let clamped = max(0.0, min(100.0, rpm))
+                return h - 14 - CGFloat(clamped / 100.0) * (h - 24)
+            }
+
+            // Horizontal reference lines (25%, 50%, 75%, 100%)
+            for pct in [25.0, 50.0, 75.0, 100.0] {
+                let y = yPos(pct)
+                var gridPath = Path()
+                gridPath.move(to: CGPoint(x: 12, y: y))
+                gridPath.addLine(to: CGPoint(x: w - 12, y: y))
+                context.stroke(
+                    gridPath,
+                    with: .color(SwiftUI.Color.primary.opacity(0.05)),
+                    lineWidth: 1
+                )
+            }
+
+            let sorted = anchors.sorted { $0.temp < $1.temp }
+            guard !sorted.isEmpty else { return }
+
+            var points: [CGPoint] = []
+            points.append(CGPoint(x: xPos(minT), y: yPos(sorted.first!.rpmPercent)))
+            for a in sorted {
+                points.append(CGPoint(x: xPos(a.temp), y: yPos(a.rpmPercent)))
+            }
+            points.append(CGPoint(x: xPos(maxT), y: yPos(min(100.0, sorted.last!.rpmPercent + 10))))
+
+            // Build smooth Bezier path
+            var curvePath = Path()
+            curvePath.move(to: points[0])
+            for i in 1..<points.count {
+                let p0 = points[i - 1]
+                let p1 = points[i]
+                let midX = (p0.x + p1.x) / 2
+                curvePath.addCurve(to: p1, control1: CGPoint(x: midX, y: p0.y), control2: CGPoint(x: midX, y: p1.y))
+            }
+
+            // Shaded fill under curve
+            var fillPath = curvePath
+            fillPath.addLine(to: CGPoint(x: points.last!.x, y: h - 6))
+            fillPath.addLine(to: CGPoint(x: points.first!.x, y: h - 6))
+            fillPath.closeSubpath()
+
+            let gradient = Gradient(colors: [
+                Design.Color.accent.opacity(0.32),
+                Design.Color.accent.opacity(0.02)
+            ])
+            context.fill(fillPath, with: .linearGradient(gradient, startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: h)))
+
+            // Curve stroke
+            context.stroke(
+                curvePath,
+                with: .color(Design.Color.accent),
+                lineWidth: 2.2
+            )
+
+            // Milestone anchor dots & guidelines
+            for a in sorted {
+                let pt = CGPoint(x: xPos(a.temp), y: yPos(a.rpmPercent))
+
+                var vGuide = Path()
+                vGuide.move(to: CGPoint(x: pt.x, y: pt.y))
+                vGuide.addLine(to: CGPoint(x: pt.x, y: h - 6))
+                context.stroke(
+                    vGuide,
+                    with: .color(SwiftUI.Color.primary.opacity(0.12)),
+                    style: StrokeStyle(lineWidth: 1, dash: [2, 2])
+                )
+
+                let dotOuter = Path(ellipseIn: CGRect(x: pt.x - 4.5, y: pt.y - 4.5, width: 9, height: 9))
+                context.fill(dotOuter, with: .color(Design.Color.accent))
+
+                let dotInner = Path(ellipseIn: CGRect(x: pt.x - 2, y: pt.y - 2, width: 4, height: 4))
+                context.fill(dotInner, with: .color(SwiftUI.Color.white))
+            }
+
+            // Real-time SoC temperature tracking beacon
+            if let curT = currentTemp, curT >= minT && curT <= maxT {
+                let curX = xPos(curT)
+
+                var curRpm: Double = sorted.first!.rpmPercent
+                if curT <= sorted.first!.temp {
+                    curRpm = sorted.first!.rpmPercent
+                } else if curT >= sorted.last!.temp {
+                    curRpm = sorted.last!.rpmPercent
+                } else {
+                    for i in 0..<(sorted.count - 1) {
+                        let a0 = sorted[i]
+                        let a1 = sorted[i + 1]
+                        if curT >= a0.temp && curT <= a1.temp {
+                            let frac = (curT - a0.temp) / (a1.temp - a0.temp)
+                            curRpm = a0.rpmPercent + frac * (a1.rpmPercent - a0.rpmPercent)
+                            break
+                        }
+                    }
+                }
+                let curY = yPos(curRpm)
+
+                var line = Path()
+                line.move(to: CGPoint(x: curX, y: 2))
+                line.addLine(to: CGPoint(x: curX, y: h - 6))
+                context.stroke(
+                    line,
+                    with: .color(SwiftUI.Color.cyan.opacity(0.8)),
+                    style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])
+                )
+
+                let beacon = Path(ellipseIn: CGRect(x: curX - 6, y: curY - 6, width: 12, height: 12))
+                context.fill(beacon, with: .color(SwiftUI.Color.cyan.opacity(0.35)))
+                let beaconCore = Path(ellipseIn: CGRect(x: curX - 3, y: curY - 3, width: 6, height: 6))
+                context.fill(beaconCore, with: .color(SwiftUI.Color.cyan))
+            }
+        }
+        .frame(height: 85)
+        .background(Design.Color.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(SwiftUI.Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+}
+
+struct CustomCurveEditorView: View {
+    @ObservedObject var fanVM: FanControlViewModel
+    let currentTemp: Double?
+    let disabled: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Live spline curve visualization
+            CustomCurveCanvasView(
+                anchors: fanVM.customCurveAnchors,
+                currentTemp: currentTemp
+            )
+
+            // Temperature Axis Legend
+            HStack {
+                Text("35°C (Idle)")
+                    .font(.system(size: 8.5, design: .monospaced))
+                    .foregroundStyle(Design.Color.tertiaryText)
+                Spacer()
+                if let t = currentTemp {
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(SwiftUI.Color.cyan)
+                            .frame(width: 5, height: 5)
+                        Text("\(Int(t))°C Live")
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(SwiftUI.Color.cyan)
+                    }
+                }
+                Spacer()
+                Text("95°C (Max)")
+                    .font(.system(size: 8.5, design: .monospaced))
+                    .foregroundStyle(Design.Color.tertiaryText)
+            }
+            .padding(.horizontal, 4)
+
+            // 4 Milestone Target Sliders
+            VStack(spacing: 3) {
+                ForEach(fanVM.customCurveAnchors) { anchor in
+                    milestoneSliderRow(anchor)
+                }
+            }
+
+            // Quick reset button
+            HStack {
+                Spacer()
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        fanVM.resetCurveToRecommended()
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 9))
+                        Text("Reset to Defaults")
+                            .font(.system(size: 9))
+                    }
+                    .foregroundStyle(Design.Color.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .disabled(disabled)
+                .kjolTooltip(title: "Reset Curve", description: "Reverts custom thermal curve milestone anchors back to recommended defaults.")
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func milestoneSliderRow(_ anchor: CurveMilestone) -> some View {
+        HStack(spacing: 6) {
+            // Milestone label & temp badge
+            HStack(spacing: 3) {
+                Text("\(Int(anchor.temp))°C")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Design.Color.foreground)
+                Text("(\(anchor.label))")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Design.Color.secondaryText)
+            }
+            .frame(width: 80, alignment: .leading)
+
+            Slider(
+                value: Binding(
+                    get: { anchor.rpmPercent },
+                    set: { fanVM.updateCurveAnchorRPM(temp: anchor.temp, rpm: $0) }
+                ),
+                in: 0...100,
+                step: 5,
+                onEditingChanged: { editing in
+                    if !editing {
+                        fanVM.updateCurveAnchorRPM(temp: anchor.temp, rpm: anchor.rpmPercent, immediate: true)
+                    }
+                }
+            )
+            .disabled(disabled)
+            .kjolTooltip(
+                title: "\(anchor.label) Anchor (\(Int(anchor.temp))°C)",
+                description: "Target fan speed of \(Int(anchor.rpmPercent))% when junction temperature reaches \(Int(anchor.temp))°C."
+            )
+
+            Text("\(Int(anchor.rpmPercent))%")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(Design.Color.accent)
+                .frame(width: 32, alignment: .trailing)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Design.Color.background.opacity(0.4), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+}
+
 struct PowerBatteryCardView: View {
     @ObservedObject var powerVM: PowerViewModel
     @ObservedObject var telemetryVM: TelemetryViewModel
     @ObservedObject var host: Host
     @State private var showAdvanced: Bool = false
+    @State private var showLegacyControls: Bool = false
 
     var body: some View {
         CardContainer(title: "Power & Battery Management", backgroundResource: "battery-header.jpg") {
             VStack(alignment: .leading, spacing: Design.Spacing.space2) {
-                // Safety warning banner if indexing failsafe triggered
-                if powerVM.daemonsFailsafeTriggered && !powerVM.daemonsSuspended {
-                    Button(action: {
-                        powerVM.toggleDaemons(true)
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(Design.Typography.xs)
-                                .foregroundStyle(Design.Color.warning)
-                            Text("Indexing auto-paused (4h safety limit). Click to re-engage.")
-                                .font(Design.Typography.xs)
-                                .foregroundStyle(Design.Color.warning)
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 2)
+                // Battery Section Branch based on BatteryControlTier
+                switch powerVM.batteryTier {
+                case .desktopNoBattery:
+                    desktopPowerSection
+                case .systemManaged:
+                    systemManagedBatterySection
+                case .directSMC:
+                    directSmcBatterySection
                 }
+            }
+        }
+    }
 
-                if !powerVM.hardwareControlSupported {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "lock.shield.fill")
-                                .foregroundStyle(Design.Color.warning)
-                            Text("Hardware SMC Gated by macOS 27")
-                                .font(Design.Typography.xs)
-                                .bold()
-                                .foregroundStyle(Design.Color.warning)
-                            Spacer()
-                        }
-                        Text("macOS 27 restricts direct SMC battery writes. For optimal longevity, configure Apple's native 80% charge limit in System Settings.")
-                            .font(Design.Typography.xs)
-                            .foregroundStyle(Design.Color.secondaryText)
-                        Button(action: {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.battery") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "gearshape")
-                                Text("Open macOS Battery Settings")
-                            }
+    // MARK: - Subsections
+
+    private var desktopPowerSection: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "powerplug.fill")
+                .font(Design.Typography.sm)
+                .foregroundStyle(Design.Color.accent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Direct AC Power")
+                    .font(Design.Typography.xs)
+                    .bold()
+                    .foregroundStyle(Design.Color.foreground)
+                Text("Stationary Apple Silicon hardware without internal battery.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Design.Color.tertiaryText)
+            }
+            Spacer()
+        }
+        .padding(Design.Spacing.space2)
+        .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .kjolTooltip(title: "Stationary Desktop Hardware", description: "Direct wall power connected. Battery management and charge throttling are omitted.")
+    }
+
+    private var systemManagedBatterySection: some View {
+        VStack(alignment: .leading, spacing: Design.Spacing.space2) {
+            // Live Battery Telemetry Grid
+            HStack(spacing: Design.Spacing.space2) {
+                batteryMetricBadge(
+                    icon: telemetryVM.isCharging ? "bolt.fill" : (telemetryVM.externalConnected ? "powerplug.fill" : "battery.100"),
+                    label: "Charge",
+                    value: "\(telemetryVM.batteryCharge)%",
+                    color: telemetryVM.isCharging ? Design.Color.accent : Design.Color.foreground,
+                    tipTitle: "Battery Charge Level",
+                    tipDesc: "Current State of Charge (SoC) as reported by system power source."
+                )
+                batteryMetricBadge(
+                    icon: "heart.fill",
+                    label: "Health",
+                    value: telemetryVM.batteryHealthPercent != nil ? String(format: "%.0f%%", telemetryVM.batteryHealthPercent!) : "Normal",
+                    color: Design.Color.accent,
+                    tipTitle: "Battery Health",
+                    tipDesc: "Maximum capacity relative to when it was brand new."
+                )
+                batteryMetricBadge(
+                    icon: "arrow.triangle.2.circlepath",
+                    label: "Cycles",
+                    value: telemetryVM.batteryCycles > 0 ? "\(telemetryVM.batteryCycles)" : "—",
+                    color: Design.Color.secondaryText,
+                    tipTitle: "Cycle Count",
+                    tipDesc: "Total number of complete 100% discharge cycles accumulated by the cell."
+                )
+                batteryMetricBadge(
+                    icon: "thermometer.medium",
+                    label: "Temp",
+                    value: telemetryVM.batteryTemp != nil ? "\(Int(telemetryVM.batteryTemp!))°C" : "—",
+                    color: Design.Color.secondaryText,
+                    tipTitle: "Battery Temperature",
+                    tipDesc: "Internal battery temperature sensor measurement."
+                )
+            }
+
+            // Clean Native Management Guidance & Settings Action
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Design.Color.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Native macOS Battery Management")
                             .font(Design.Typography.xs)
                             .bold()
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Design.Color.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .foregroundStyle(Design.Color.accent)
-                        }
-                        .buttonStyle(.plain)
+                            .foregroundStyle(Design.Color.foreground)
+                        Text("Set charging limits in macOS system settings - 80% charge limit recommended for battery health")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Design.Color.tertiaryText)
                     }
-                    .padding(Design.Spacing.space2)
-                    .background(Design.Color.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Design.Color.warning.opacity(0.3), lineWidth: 1)
-                    )
+                    Spacer()
                 }
 
-                // Main Charge Limit Control
-                VStack(alignment: .leading, spacing: Design.Spacing.space1) {
+                Button(action: {
+                    BatterySettingsLauncher.openSettings()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "gearshape")
+                            .font(Design.Typography.xs)
+                        Text("Open macOS Battery Settings")
+                            .font(Design.Typography.xs)
+                            .bold()
+                        Spacer()
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Design.Color.tertiaryText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Design.Color.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Design.Color.accent.opacity(0.3), lineWidth: 1)
+                    )
+                    .foregroundStyle(Design.Color.accent)
+                }
+                .buttonStyle(.plain)
+                .kjolTooltip(
+                    title: "Open Battery Settings",
+                    description: "Navigates directly to the macOS System Settings pane to configure native 80% limit."
+                )
+            }
+            .padding(Design.Spacing.space2)
+            .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            // Optional Legacy Hardware Controls Drawer (Cleanly Collapsed by Default)
+            ExpandableSectionHeader(
+                title: "Legacy SMC Hardware Controls",
+                icon: "lock.shield",
+                isExpanded: showLegacyControls
+            ) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showLegacyControls.toggle()
+                }
+            }
+
+            if showLegacyControls {
+                VStack(alignment: .leading, spacing: Design.Spacing.space2) {
+                    Text("Direct SMC register writes are gated by macOS 27 integrity protection. Displayed for diagnostics only.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Design.Color.warning)
+                        .padding(.bottom, 2)
+
+                    directSmcControlsView(disabled: true)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    private var directSmcBatterySection: some View {
+        VStack(alignment: .leading, spacing: Design.Spacing.space2) {
+            directSmcControlsView(disabled: false)
+        }
+    }
+
+    private func batteryMetricBadge(icon: String, label: String, value: String, color: SwiftUI.Color, tipTitle: String, tipDesc: String) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 9))
+                    .foregroundStyle(color)
+                Text(label)
+                    .font(.system(size: 9))
+                    .foregroundStyle(Design.Color.tertiaryText)
+            }
+            Text(value)
+                .font(Design.Typography.xsMono)
+                .bold()
+                .foregroundStyle(Design.Color.foreground)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .contentShape(Rectangle())
+        .kjolTooltip(title: tipTitle, description: tipDesc)
+    }
+
+    private func directSmcControlsView(disabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Design.Spacing.space2) {
+            // Main Charge Limit Control
+            VStack(alignment: .leading, spacing: Design.Spacing.space1) {
+                HStack {
+                    Text("Charge Limit Target")
+                        .font(Design.Typography.xs)
+                        .foregroundStyle(Design.Color.secondaryText)
+                    Spacer()
+                    Text("\(powerVM.chargeLimit)%")
+                        .font(Design.Typography.xsMono)
+                        .bold()
+                        .foregroundStyle(powerVM.limitEnabled && !disabled ? Design.Color.foreground : Design.Color.tertiaryText)
+                    Text(disabled ? "(Restricted)" : (powerVM.limitEnabled ? "(Active)" : "(Disabled)"))
+                        .font(Design.Typography.xs)
+                        .foregroundStyle(powerVM.limitEnabled && !disabled ? Design.Color.accent : Design.Color.tertiaryText)
+                }
+
+                HStack(spacing: Design.Spacing.space2) {
+                    Slider(
+                        value: Binding(
+                            get: { Double(powerVM.chargeLimit) },
+                            set: { powerVM.setChargeLimit(Int($0), enabled: true) }
+                        ),
+                        in: 50...90,
+                        step: 5
+                    )
+                    .disabled(!powerVM.limitEnabled || disabled || host.busy)
+                    .opacity(powerVM.limitEnabled && !disabled ? 1.0 : 0.4)
+                    .kjolTooltip(
+                        title: "Charge Limit Slider",
+                        description: "Select target maximum battery charge limit percentage between 50% and 90%."
+                    )
+                }
+                .frame(height: 20)
+
+                if powerVM.limitEnabled && !disabled {
+                    Text("Sailing Range: \(max(1, powerVM.chargeLimit - powerVM.sailingDiff))% – \(powerVM.chargeLimit)%")
+                        .font(Design.Typography.xsMono)
+                        .foregroundStyle(Design.Color.tertiaryText)
+                }
+            }
+
+            // Quick Action Buttons: Top Up (100%) & Discharge on AC
+            HStack(spacing: Design.Spacing.space2) {
+                Button(action: {
+                    powerVM.toggleTopUp(!powerVM.topUpActive)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: powerVM.topUpActive ? "bolt.fill" : "bolt")
+                        Text("Top Up (100%)")
+                            .font(Design.Typography.xs)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(powerVM.topUpActive ? Design.Color.accent.opacity(0.2) : Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(powerVM.topUpActive ? Design.Color.accent : Design.Color.tertiaryText.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(disabled || host.busy)
+                .opacity(!disabled ? 1.0 : 0.4)
+                .kjolTooltip(
+                    title: "Top Up (100%)",
+                    description: "Temporarily disables charge ceiling to fully charge battery for travel."
+                )
+
+                Button(action: {
+                    powerVM.toggleDischarge(!powerVM.dischargeActive)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: powerVM.dischargeActive ? "arrow.down.circle.fill" : "arrow.down.circle")
+                        Text("Discharge to Limit")
+                            .font(Design.Typography.xs)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(powerVM.dischargeActive ? Design.Color.warning.opacity(0.2) : Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(powerVM.dischargeActive ? Design.Color.warning : Design.Color.tertiaryText.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(disabled || host.busy)
+                .opacity(!disabled ? 1.0 : 0.4)
+                .kjolTooltip(
+                    title: "Discharge to Limit",
+                    description: "Draws battery power down to the target limit while still connected to AC power."
+                )
+            }
+
+            Divider()
+
+            ExpandableSectionHeader(
+                title: "Advanced Battery Controls",
+                icon: "slider.horizontal.3",
+                isExpanded: showAdvanced
+            ) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showAdvanced.toggle()
+                }
+            }
+
+            if showAdvanced {
+                VStack(alignment: .leading, spacing: Design.Spacing.space2) {
+                    // Battery Cycle Count
                     HStack {
-                        Text("Charge Limit Target")
+                        Text("Battery Cycle Count")
                             .font(Design.Typography.xs)
                             .foregroundStyle(Design.Color.secondaryText)
                         Spacer()
-                        Text("\(powerVM.chargeLimit)%")
+                        Text(telemetryVM.batteryCycles > 0 ? "\(telemetryVM.batteryCycles)" : "—")
                             .font(Design.Typography.xsMono)
                             .bold()
-                            .foregroundStyle(powerVM.limitEnabled && powerVM.hardwareControlSupported ? Design.Color.foreground : Design.Color.tertiaryText)
-                        Text(!powerVM.hardwareControlSupported ? "(Restricted)" : (powerVM.limitEnabled ? "(Active)" : "(Disabled)"))
-                            .font(Design.Typography.xs)
-                            .foregroundStyle(powerVM.limitEnabled && powerVM.hardwareControlSupported ? Design.Color.accent : Design.Color.tertiaryText)
+                            .foregroundStyle(Design.Color.foreground)
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .kjolTooltip(title: "Hardware Cycle Count", description: "Direct SMC register readout of full charge discharge cycles.")
 
-                    HStack(spacing: Design.Spacing.space2) {
-                        Slider(
-                            value: Binding(
-                                get: { Double(powerVM.chargeLimit) },
-                                set: { powerVM.setChargeLimit(Int($0), enabled: true) }
-                            ),
-                            in: 50...90,
-                            step: 5
-                        )
-                        .disabled(!powerVM.limitEnabled || !powerVM.hardwareControlSupported || host.busy)
-                        .opacity(powerVM.limitEnabled && powerVM.hardwareControlSupported ? 1.0 : 0.4)
-                    }
-                    .frame(height: 20)
-
-                    if powerVM.limitEnabled && powerVM.hardwareControlSupported {
-                        Text("Sailing Range: \(max(1, powerVM.chargeLimit - powerVM.sailingDiff))% – \(powerVM.chargeLimit)%")
-                            .font(Design.Typography.xsMono)
-                            .foregroundStyle(Design.Color.tertiaryText)
-                    }
-                }
-
-                // Quick Action Buttons: Top Up (100%) & Discharge on AC
-                HStack(spacing: Design.Spacing.space2) {
-                    Button(action: {
-                        powerVM.toggleTopUp(!powerVM.topUpActive)
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: powerVM.topUpActive ? "bolt.fill" : "bolt")
-                            Text("Top Up (100%)")
-                                .font(Design.Typography.xs)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(powerVM.topUpActive ? Design.Color.accent.opacity(0.2) : Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(powerVM.topUpActive ? Design.Color.accent : Design.Color.tertiaryText.opacity(0.3), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!powerVM.hardwareControlSupported || host.busy)
-                    .opacity(powerVM.hardwareControlSupported ? 1.0 : 0.4)
-
-                    Button(action: {
-                        powerVM.toggleDischarge(!powerVM.dischargeActive)
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: powerVM.dischargeActive ? "arrow.down.circle.fill" : "arrow.down.circle")
-                            Text("Discharge to Limit")
-                                .font(Design.Typography.xs)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(powerVM.dischargeActive ? Design.Color.warning.opacity(0.2) : Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(powerVM.dischargeActive ? Design.Color.warning : Design.Color.tertiaryText.opacity(0.3), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!powerVM.hardwareControlSupported || host.busy)
-                    .opacity(powerVM.hardwareControlSupported ? 1.0 : 0.4)
-                }
-
-                Divider()
-
-                ExpandableSectionHeader(
-                    title: "Advanced Battery Controls",
-                    icon: "slider.horizontal.3",
-                    isExpanded: showAdvanced
-                ) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showAdvanced.toggle()
-                    }
-                }
-
-                if showAdvanced {
-                    VStack(alignment: .leading, spacing: Design.Spacing.space2) {
-                        // Battery Cycle Count
+                    // Sailing Gap Slider
+                    VStack(alignment: .leading, spacing: 2) {
                         HStack {
-                            Text("Battery Cycle Count")
+                            Text("Sailing Gap (Hysteresis)")
                                 .font(Design.Typography.xs)
                                 .foregroundStyle(Design.Color.secondaryText)
                             Spacer()
-                            Text(telemetryVM.batteryCycles > 0 ? "\(telemetryVM.batteryCycles)" : "—")
+                            Text("±\(powerVM.sailingDiff)%")
                                 .font(Design.Typography.xsMono)
-                                .bold()
-                                .foregroundStyle(Design.Color.foreground)
+                                .foregroundStyle(Design.Color.tertiaryText)
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 4)
-                        .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        Slider(
+                            value: Binding(
+                                get: { Double(powerVM.sailingDiff) },
+                                set: { powerVM.setSailingDiff(Int($0)) }
+                            ),
+                            in: 2...10,
+                            step: 1
+                        )
+                        .controlSize(.small)
+                        .disabled(disabled || host.busy)
+                        .kjolTooltip(
+                            title: "Sailing Gap Hysteresis",
+                            description: "Charge buffer to prevent repetitive micro-charging cycles around the charge ceiling."
+                        )
+                    }
 
-                        // Sailing Gap Slider
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text("Sailing Gap (Hysteresis)")
-                                    .font(Design.Typography.xs)
-                                    .foregroundStyle(Design.Color.secondaryText)
-                                Spacer()
-                                Text("±\(powerVM.sailingDiff)%")
-                                    .font(Design.Typography.xsMono)
-                                    .foregroundStyle(Design.Color.tertiaryText)
-                            }
+                    // Overheat Protection
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Toggle("Heat Protection", isOn: Binding(
+                                get: { powerVM.heatProtectionEnabled },
+                                set: { powerVM.setHeatProtection(enabled: $0, maxTemp: powerVM.maxTempC) }
+                            ))
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .disabled(disabled || host.busy)
+                            .kjolTooltip(
+                                title: "Thermal Charging Inhibit",
+                                description: "Pauses charging automatically if battery cells exceed the specified thermal ceiling."
+                            )
+
+                            Spacer()
+
+                            Text("\(Int(powerVM.maxTempC))°C")
+                                .font(Design.Typography.xsMono)
+                                .foregroundStyle(powerVM.heatProtectionEnabled && !disabled ? Design.Color.secondaryText : Design.Color.tertiaryText)
+                        }
+
+                        if powerVM.heatProtectionEnabled {
                             Slider(
                                 value: Binding(
-                                    get: { Double(powerVM.sailingDiff) },
-                                    set: { powerVM.setSailingDiff(Int($0)) }
+                                    get: { powerVM.maxTempC },
+                                    set: { powerVM.setHeatProtection(enabled: true, maxTemp: $0) }
                                 ),
-                                in: 2...10,
+                                in: 30...45,
                                 step: 1
                             )
                             .controlSize(.small)
-                            .disabled(!powerVM.hardwareControlSupported || host.busy)
-                        }
-
-                        // Overheat Protection
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Toggle("Heat Protection", isOn: Binding(
-                                    get: { powerVM.heatProtectionEnabled },
-                                    set: { powerVM.setHeatProtection(enabled: $0, maxTemp: powerVM.maxTempC) }
-                                ))
-                                .toggleStyle(.switch)
-                                .controlSize(.small)
-                                .disabled(!powerVM.hardwareControlSupported || host.busy)
-
-                                Spacer()
-
-                                Text("\(Int(powerVM.maxTempC))°C")
-                                    .font(Design.Typography.xsMono)
-                                    .foregroundStyle(powerVM.heatProtectionEnabled && powerVM.hardwareControlSupported ? Design.Color.secondaryText : Design.Color.tertiaryText)
-                            }
-
-                            if powerVM.heatProtectionEnabled {
-                                Slider(
-                                    value: Binding(
-                                        get: { powerVM.maxTempC },
-                                        set: { powerVM.setHeatProtection(enabled: true, maxTemp: $0) }
-                                    ),
-                                    in: 30...45,
-                                    step: 1
-                                )
-                                .controlSize(.small)
-                                .disabled(!powerVM.hardwareControlSupported || host.busy)
-                            }
-                        }
-
-                        // Battery Calibration Mode
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Battery Calibration")
-                                    .font(Design.Typography.xs)
-                                    .foregroundStyle(Design.Color.secondaryText)
-                                Spacer()
-                                if powerVM.calibrationState != "idle" && powerVM.calibrationState != "completed" {
-                                    Button("Cancel") {
-                                        powerVM.triggerCalibration(action: "stop")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .font(Design.Typography.xs)
-                                    .foregroundStyle(Design.Color.warning)
-                                } else {
-                                    Button("Start Cycle") {
-                                        powerVM.triggerCalibration(action: "start")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .font(Design.Typography.xs)
-                                    .foregroundStyle(Design.Color.accent)
-                                    .disabled(!powerVM.hardwareControlSupported || host.busy)
-                                }
-                            }
-
-                            if powerVM.calibrationState != "idle" && powerVM.calibrationState != "completed" {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    ProgressView(value: powerVM.calibrationProgress, total: 1.0)
-                                        .controlSize(.small)
-                                    HStack {
-                                        Text(powerVM.calibrationMessage)
-                                            .font(Design.Typography.xsMono)
-                                            .foregroundStyle(Design.Color.tertiaryText)
-                                        Spacer()
-                                        Text("\(Int(powerVM.calibrationProgress * 100))%")
-                                            .font(Design.Typography.xsMono)
-                                            .foregroundStyle(Design.Color.secondaryText)
-                                    }
-                                }
-                            } else if let lastCal = powerVM.lastCalibration {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.seal.fill")
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(Design.Color.accent)
-                                        Text("Last calibrated: \(lastCal.relativeTime)")
-                                            .font(Design.Typography.xs)
-                                            .foregroundStyle(Design.Color.foreground)
-                                    }
-                                    HStack(spacing: 4) {
-                                        Text("Health: \(String(format: "%.1f%%", lastCal.healthPercent))")
-                                            .font(Design.Typography.xsMono)
-                                            .foregroundStyle(Design.Color.secondaryText)
-                                        if lastCal.rawMaxCapacity > 0 && lastCal.designCapacity > 0 {
-                                            Text("(\(lastCal.rawMaxCapacity)/\(lastCal.designCapacity) mAh)")
-                                                .font(Design.Typography.xsMono)
-                                                .foregroundStyle(Design.Color.tertiaryText)
-                                        }
-                                        if lastCal.cycleCount > 0 {
-                                            Text("• \(lastCal.cycleCount) cycles")
-                                                .font(Design.Typography.xsMono)
-                                                .foregroundStyle(Design.Color.tertiaryText)
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 4)
-                                .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            } else {
-                                Text("4-phase cycle: 100% soak → 15% AC discharge → target recharge")
-                                    .font(Design.Typography.xsMono)
-                                    .foregroundStyle(Design.Color.tertiaryText)
-                            }
+                            .disabled(disabled || host.busy)
+                            .kjolTooltip(
+                                title: "Battery Thermal Cutoff",
+                                description: "Maximum allowable cell temperature during charging (\(Int(powerVM.maxTempC))°C)."
+                            )
                         }
                     }
-                    .padding(.top, 2)
+
+                    // Battery Calibration Mode
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Battery Calibration")
+                                .font(Design.Typography.xs)
+                                .foregroundStyle(Design.Color.secondaryText)
+                            Spacer()
+                            if powerVM.calibrationState != "idle" && powerVM.calibrationState != "completed" {
+                                Button("Cancel") {
+                                    powerVM.triggerCalibration(action: "stop")
+                                }
+                                .buttonStyle(.plain)
+                                .font(Design.Typography.xs)
+                                .foregroundStyle(Design.Color.warning)
+                                .kjolTooltip(title: "Cancel Calibration", description: "Aborts the multi-phase battery conditioning cycle.")
+                            } else {
+                                Button("Start Cycle") {
+                                    powerVM.triggerCalibration(action: "start")
+                                }
+                                .buttonStyle(.plain)
+                                .font(Design.Typography.xs)
+                                .foregroundStyle(Design.Color.accent)
+                                .disabled(disabled || host.busy)
+                                .kjolTooltip(
+                                    title: "Start Conditioning Cycle",
+                                    description: "Runs a 4-phase cycle (100% soak → 15% discharge → recharge) to recalibrate gas-gauge accuracy."
+                                )
+                            }
+                        }
+
+                        if powerVM.calibrationState != "idle" && powerVM.calibrationState != "completed" {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ProgressView(value: powerVM.calibrationProgress, total: 1.0)
+                                    .controlSize(.small)
+                                HStack {
+                                    Text(powerVM.calibrationMessage)
+                                        .font(Design.Typography.xsMono)
+                                        .foregroundStyle(Design.Color.tertiaryText)
+                                    Spacer()
+                                    Text("\(Int(powerVM.calibrationProgress * 100))%")
+                                        .font(Design.Typography.xsMono)
+                                        .foregroundStyle(Design.Color.secondaryText)
+                                }
+                            }
+                        } else if let lastCal = powerVM.lastCalibration {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.seal.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Design.Color.accent)
+                                    Text("Last calibrated: \(lastCal.relativeTime)")
+                                        .font(Design.Typography.xs)
+                                        .foregroundStyle(Design.Color.foreground)
+                                }
+                                HStack(spacing: 4) {
+                                    Text("Health: \(String(format: "%.1f%%", lastCal.healthPercent))")
+                                        .font(Design.Typography.xsMono)
+                                        .foregroundStyle(Design.Color.secondaryText)
+                                    if lastCal.rawMaxCapacity > 0 && lastCal.designCapacity > 0 {
+                                        Text("(\(lastCal.rawMaxCapacity)/\(lastCal.designCapacity) mAh)")
+                                            .font(Design.Typography.xsMono)
+                                            .foregroundStyle(Design.Color.tertiaryText)
+                                    }
+                                    if lastCal.cycleCount > 0 {
+                                        Text("• \(lastCal.cycleCount) cycles")
+                                            .font(Design.Typography.xsMono)
+                                            .foregroundStyle(Design.Color.tertiaryText)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        } else {
+                            Text("4-phase cycle: 100% soak → 15% AC discharge → target recharge")
+                                .font(Design.Typography.xsMono)
+                                .foregroundStyle(Design.Color.tertiaryText)
+                        }
+                    }
                 }
+                .padding(.top, 2)
             }
         }
     }
@@ -1032,6 +2069,7 @@ struct UpdateBannerView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .kjolTooltip(title: "Download Update", description: "Downloads release v\(info.version) installer from GitHub.")
             }
             .padding(Design.Spacing.space2)
             .background(Design.Color.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1062,6 +2100,7 @@ struct UpdateBannerView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .kjolTooltip(title: "Install Update", description: "Opens the downloaded .pkg installer to upgrade Kjol.")
             }
             .padding(Design.Spacing.space2)
             .background(Design.Color.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1090,6 +2129,7 @@ struct FooterView: View {
                     .buttonStyle(.plain)
                     .font(Design.Typography.xs)
                     .foregroundStyle(Design.Color.secondaryText)
+                    .kjolTooltip(title: "Quit Kjol", description: "Terminates the Kjol application and deactivates always-on if active.")
 
                 Spacer(minLength: 0)
 
@@ -1105,6 +2145,7 @@ struct FooterView: View {
                     Text("Up to Date (v\(currentVersion))")
                         .font(Design.Typography.xsMono)
                         .foregroundStyle(Design.Color.tertiaryText)
+                        .kjolTooltip(title: "Current Version", description: "Kjol v\(currentVersion) is up to date.")
                 case .error:
                     Button("Check Failed: Retry") {
                         updateVM.checkForUpdates(silent: false)
@@ -1112,6 +2153,7 @@ struct FooterView: View {
                     .buttonStyle(.plain)
                     .font(Design.Typography.xs)
                     .foregroundStyle(Design.Color.warning)
+                    .kjolTooltip(title: "Retry Update Check", description: "Reconnects to GitHub Releases API to verify updates.")
                 default:
                     Button("Check for Updates") {
                         updateVM.checkForUpdates(silent: false)
@@ -1119,6 +2161,7 @@ struct FooterView: View {
                     .buttonStyle(.plain)
                     .font(Design.Typography.xs)
                     .foregroundStyle(Design.Color.secondaryText)
+                    .kjolTooltip(title: "Check for Updates", description: "Queries GitHub Releases to check for newer versions of Kjol.")
                 }
             }
         }
@@ -1153,7 +2196,7 @@ struct KjolView: View {
             FooterView(host: host, updateVM: host.updateVM)
         }
         .padding(Design.Spacing.space4)
-        .frame(width: 380, height: 580)
+        .frame(width: 513, height: 580)
         .background(Design.Color.background)
     }
 }
@@ -1262,9 +2305,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         p.behavior = .transient
         p.delegate = self
         p.animates = false
-        p.contentSize = CGSize(width: 380, height: 580)
+        p.contentSize = CGSize(width: 513, height: 580)
         let controller = KjolHostingController(rootView: KjolView().environmentObject(host))
-        controller.preferredContentSize = CGSize(width: 380, height: 580)
+        controller.preferredContentSize = CGSize(width: 513, height: 580)
         p.contentViewController = controller
         return p
     }

@@ -4,18 +4,14 @@
 **Repository:** `Wiltermoodj/kjol`
 **Target OS:** macOS 13.0+ (Apple Silicon optimized)
 
----
-
 ## 1. Executive Summary
 
-This document specifies how Kjol is packaged and distributed to end-users as a single-file installer (`Kjol.pkg`), and how Kjol performs in-app updates directly from GitHub Releases (`Wiltermoodj/kjol`).
+This document specifies how Kjol is packaged and distributed to end-users as a single-file installer (`Kjol.pkg`), and how Kjol does in-app updates directly from GitHub Releases (`Wiltermoodj/kjol`).
 
 The distribution design is tailored for **non-technical users**:
 1. **Single-File Installation:** Users download a single `Kjol.pkg` installer package. Double-clicking it presents a standard macOS installer UI that prompts for administrator credentials once, installs `Kjol.app` to `/Applications`, configures and bootstraps the `com.lappier.kjol.helper` privileged LaunchDaemon, and immediately starts `Kjol.app` in the menu bar without requiring a reboot or terminal commands.
 2. **Gatekeeper Guidance:** Since the app uses ad-hoc signing (`-s -`), macOS Gatekeeper will show an "Unidentified Developer" dialog on initial open. Simple step-by-step guidance (Right-Click -> Open or System Settings > Privacy & Security) is provided for non-technical users.
 3. **In-App Updater:** Kjol automatically checks for updates silently when the menu bar popover opens, as well as providing a manual "Check for Updates" button in the UI footer. When a release on `Wiltermoodj/kjol` has a higher version tag, Kjol displays an update notification with an **"Update Now"** button. Clicking this downloads `Kjol.pkg` in the background and opens it with macOS Installer so the user can upgrade in one click.
-
----
 
 ## 2. Single-File Installer Package (`Kjol.pkg`) Architecture
 
@@ -34,8 +30,6 @@ The `postinstall` script runs with root privileges at the end of package install
 3. Detects the currently active console user (`CONSOLE_USER=$(stat -f "%Su" /dev/console)`).
 4. Restarts `Kjol.app` in the active user's GUI session using `sudo -u "$CONSOLE_USER" open -a "/Applications/Kjol.app"`.
 
----
-
 ## 3. In-App Updater Architecture
 
 ### 3.1 GitHub Releases API Specification
@@ -43,7 +37,7 @@ The `postinstall` script runs with root privileges at the end of package install
 - **Endpoint:** `https://api.github.com/repos/Wiltermoodj/kjol/releases/latest`
 - **User-Agent:** `Kjol-Updater/1.0`
 - **Response Handling:**
-  - Parse `tag_name` (e.g., `v1.0.1` or `1.0.1`).
+  - Parse `tag_name` (for example, `v1.0.1` or `1.0.1`).
   - Compare using Semantic Versioning against `Bundle.main.infoDictionary?["CFBundleShortVersionString"]`.
   - Scan `assets` array for an item with `name` ending in `.pkg` (or matching `Kjol.pkg`), extracting `browser_download_url`.
 
@@ -90,17 +84,13 @@ UI Integration in `FooterView` / Popover:
    - Clicking "Update Now" streams the `.pkg` download into `FileManager.default.temporaryDirectory`.
    - Upon download completion, executes `NSWorkspace.shared.open(pkgLocalURL)` which triggers macOS Installer GUI.
 
----
-
 ## 4. Gatekeeper & First-Run User Guide
 
-Because the app is distributed via single file without Apple Developer ID signing certificates:
-1. **First Download Gatekeeper Alert:** macOS will show: *"Kjol.pkg can't be opened because it is from an unidentified developer."*
+Because the app is distributed through single file without Apple Developer ID signing certificates:
+1. **First Download Gatekeeper Alert:** macOS will show: *"Kjol.pkg cannot be opened because it is from an unidentified developer."*
 2. **User Instructions (Included in Release Notes & README):**
    - **Method A (Quickest):** Right-click (or Control-click) `Kjol.pkg` -> Select **Open** -> Click **Open** in the prompt.
    - **Method B (System Settings):** Open **System Settings** -> **Privacy & Security** -> Scroll to Security -> Click **Open Anyway** next to `Kjol.pkg`.
-
----
 
 ## 5. Summary of Deliverables
 

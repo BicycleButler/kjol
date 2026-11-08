@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "description": "Automatic stubs AST dependency graph sync hooks",
+  "hooks": [
+    {
+      "event": "post_tool_execution",
+      "matcher": "replace_file_content|write_to_file|multi_replace_file_content",
+      "command": "npx --no-install stubs scan",
+      "description": "Automatically synchronizes .stubs/graph.sqlite when files are modified"
+    }
+  ]
+}
