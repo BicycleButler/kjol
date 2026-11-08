@@ -2195,10 +2195,19 @@ struct FooterView: View {
                             .foregroundStyle(Design.Color.tertiaryText)
                     }
                 case .upToDate:
-                    Text("Up to Date (v\(currentVersion))")
-                        .font(Design.Typography.xsMono)
-                        .foregroundStyle(Design.Color.tertiaryText)
-                        .kjolTooltip(title: "Current Version", description: "Kjol v\(currentVersion) is up to date.")
+                    Button {
+                        updateVM.checkForUpdates(silent: false)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("Up to Date (v\(currentVersion))")
+                                .font(Design.Typography.xsMono)
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Design.Color.tertiaryText)
+                    .kjolTooltip(title: "Check for Updates", description: "Kjol v\(currentVersion) is up to date. Click to re-check for new releases.")
                 case .error:
                     Button("Check Failed: Retry") {
                         updateVM.checkForUpdates(silent: false)

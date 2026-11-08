@@ -40,7 +40,7 @@ final class UpdateViewModel: ObservableObject {
 
     func checkForUpdates(silent: Bool = false) {
         if silent {
-            if let last = lastCheckDate, Date().timeIntervalSince(last) < 3600 {
+            if let last = lastCheckDate, Date().timeIntervalSince(last) < 900 {
                 return
             }
         }

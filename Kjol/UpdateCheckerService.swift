@@ -25,7 +25,7 @@ enum UpdateCheckerError: LocalizedError {
 
 final class UpdateCheckerService {
     private static let logger = Logger(subsystem: "com.lappier.kjol", category: "UpdateChecker")
-    private let releasesURL = URL(string: "https://api.github.com/repos/Wiltermoodj/kjol/releases/latest")!
+    private let releasesURL = URL(string: "https://api.github.com/repos/BicycleButler/kjol/releases/latest")!
     private let urlSession: URLSession
 
     init(session: URLSession = .shared) {
@@ -34,7 +34,7 @@ final class UpdateCheckerService {
 
     func checkForUpdates() async throws -> UpdateInfo? {
         Self.logger.info("Checking for updates from GitHub releases...")
-        var request = URLRequest(url: releasesURL)
+        var request = URLRequest(url: releasesURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.setValue("Kjol-Updater/1.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
 
