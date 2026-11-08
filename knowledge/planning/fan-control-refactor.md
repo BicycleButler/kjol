@@ -24,5 +24,9 @@
 1. **Helper & Protocol**: Update `KjolHelperProtocol.swift` and `KjolHelper/main.swift` to evaluate piecewise curves and persist curve state in `/var/db/kjol/`.
 2. **Models & ViewModels**: Update `FanProfile`, `AdaptiveSubProfile`, `FanControlViewModel`, and `Host.swift`.
 3. **SwiftUI View**: Implement `CustomCurveEditorView` in `Kjol/main.swift` with smooth curve rendering, milestone adjustment, and temperature tracking.
-4. **Verification**: Run `./build-kjol.sh` to make sure that clean compilation and packaging.
+4. **Interactive Parameter Synchronization (ADR-008)**:
+   - Eliminate value-copy closure capture in `milestoneSliderRow` via `anchorBinding(for:)` and parameterless `commitCurveAnchor(temp:)`.
+   - Route parameter adjustments through non-blocking `performQuietAction` without toggling `host.busy`, preventing slider track aborts and popover visual flicker.
+   - Implement a 3.0-second reconciliation grace window in `FanControlViewModel.updateFromDaemon` to guard against stale telemetry echoes clobbering active edits.
+5. **Verification**: Run `./build-kjol.sh` to make sure clean compilation and packaging.
 

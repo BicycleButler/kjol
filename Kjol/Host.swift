@@ -192,7 +192,7 @@ final class Host: ObservableObject {
         let sub = (adaptiveSubProfile ?? fanControlVM.adaptiveSubProfile).rawValue
         let pts = curvePoints ?? fanControlVM.flattenedCurvePoints
 
-        performAction { [weak self] in
+        performQuietAction { [weak self] in
             var attempt = 0
             while attempt < 12 {
                 do {
@@ -216,7 +216,7 @@ final class Host: ObservableObject {
     }
 
     func setThermalSafetyPolicy(_ policy: ThermalSafetyPolicy, ceilingTemp: Double) {
-        performAction { [weak self] in
+        performQuietAction { [weak self] in
             _ = try await self?.xpcClient.setThermalSafetyPolicy(policy: policy.rawValue, ceilingTempC: ceilingTemp)
         }
     }
@@ -260,6 +260,21 @@ final class Host: ObservableObject {
     func setCalibrationMode(_ action: String) {
         performAction { [weak self] in
             _ = try await self?.xpcClient.setCalibrationMode(action)
+        }
+    }
+
+    private func performQuietAction(_ block: @escaping () async throws -> Void) {
+        Task {
+            do {
+                try await block()
+                await MainActor.run {
+                    self.refresh()
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                }
+            }
         }
     }
 

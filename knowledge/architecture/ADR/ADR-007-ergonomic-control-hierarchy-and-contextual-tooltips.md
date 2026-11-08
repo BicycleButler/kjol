@@ -1,54 +1,49 @@
-# ADR-007: Ergonomic Control Hierarchy, Thermal Posture, and Contextual Tooltips
+# ADR-007: Ergonomic Control Hierarchy, Non-Occluding Tooltip Architecture, and Unified Action Strip
 
 ## Context
 Kjol's initial popover interface grouped controls into fixed-width cards (380pt). As feature density expanded, several ergonomic mismatches emerged:
 1. **Window Constriction:** A 380pt width caused horizontal crowding, truncated labels, and stacked controls, forcing excessive vertical scrolling.
 2. **Scattered Governor Controls:** The Compute Governor toggle was placed in the Battery card. It belongs with memory reclamation and compute.
 3. **Redundant Top Actions:** The top bar showed a Battery Settings button. This duplicated the primary button in Battery Management.
-4. **Displaced Thermal Safety:** Macro presets occupied prime space in Fan Control. The critical safety arbiter remained at the bottom.
-5. **Information Scarcity on Compact Controls:** Compact icon buttons without fast contextual guidance cause discovery friction. Native tooltips impose slow delays.
+4. **Header Clutter & Sizing Disparity:** Macro fan presets crowded the header with small buttons. Quick Actions had oversized buttons.
+5. **Tooltip Occlusion & Stacking Errors:** Tooltips drawn through local offsets covered interactive toggles and blocked user clicks. The Governor toggle had verbose text.
 
 ## Decision
 
-We adopt an **Ergonomic Control Hierarchy and Contextual Tooltip Architecture** across Kjol's menu bar presentation layer:
+We adopt an **Ergonomic Control Hierarchy, Non-Occluding Tooltip Architecture, and Unified Action Strip**:
 
 ### 1. Expanded Proportional Window Geometry
-The popover canvas expands by 35% (from 380pt to 513pt). This horizontal breadth provides visual breathing room, allowing multi-point telemetry, curve canvases, and compact button groups to coexist without layout shifts or text wrapping.
+The popover canvas maintains the expanded 513pt breadth. This horizontal breadth provides visual breathing room, allowing multi-point telemetry, curve canvases, and compact button groups to coexist without layout shifts or text wrapping.
 
-### 2. Header Surface Integration with Color-Anchored Macro Presets
-The top `HeaderView` integrates a persistent 3-mode macro preset toggle bar directly beside the application title:
-- Anchored on the left by an immutable, colored fan symbol (`fanblades.fill`) signifying active acoustic/thermal orchestration.
-- Houses three discrete mode switches in strict order: **Gentle**, **Custom**, and **Max Compute**.
-- Frees the Fan Control Strategy card from macro-level switching, letting that card focus entirely on hardware-level fan curves.
+### 2. Clean Header Surface
+`HeaderView` is simplified to contain only the application motif/title on the left, and the busy indicator and helper status badge on the right. The fan preset toggle bar is evicted from the header.
 
-### 3. Unified Compute & Memory Reclamation Cluster
-The top Quick Actions bar removes redundant battery links and consolidates performance controls into an icon-centric cluster:
-- **Always-On Clamshell:** Compact icon button (`cup.and.saucer`).
-- **Boost Memory:** Compact icon button (`bolt.badge.automatic`), renamed from "Pause Background Daemons".
-- **Compute Governor Sub-Control:** The 4-hour safety limit toggle moves directly below "Boost Memory". This establishes tight functional cohesion.
+### 3. Unified Action Strip with Equal-Sized Action Buttons
+A unified action row consolidates all primary quick actions:
+- **Always-On Clamshell:** Compact 40x40pt action button (`cup.and.saucer`).
+- **Boost Memory:** Compact 40x40pt action button (`bolt.badge.automatic`).
+- **Compute Governor Minimalist Toggle:** Only the toggle switch (no text label, no extraneous icon) mounted directly beneath the Boost Memory button, centered to its width.
+- **Fan Cooling Presets:** Three 40x40pt preset buttons (**Gentle Silent**, **Custom**, and **Max Compute**) share the row. All five buttons have identical 40x40pt dimensions.
 
-### 4. Thermal Posture Re-anchoring
-In the Fan Control Strategy card, the top position previously occupied by presets is reassigned to the safety system, renamed **Thermal Posture**:
-- Directly surfaces the active policy pills: **Off**, **Fan Boost**, and **Throttle CPU**.
-- Immediate visual indicators reflect whether emergency fan boost or CPU throttling is actively engaged.
-
-### 5. High-Responsiveness 200ms Contextual Tooltip Engine
-We introduce a lightweight, declarative SwiftUI tooltip modifier (`.kjolTooltip(title:description:placement:delay:)`) across all interactive elements:
+### 4. Non-Occluding Tooltip Presentation Architecture
+We introduce a hoisted/window-level or non-overlapping clearance geometry for `.kjolTooltip`:
 - Enforces an ergonomic 200ms hover delay using scheduled dispatch work items.
-- Displays a structured, contrast-rich floating badge containing the control title and an explanation of its operational behavior.
-- Retains native macOS `.help()` as an underlying accessibility and VoiceOver fallback.
+- Guarantees strict non-occlusion ($gap \ge 6\text{pt}$ clearance strictly outside the target control's bounding box), preventing tooltips from ever covering the button, toggle, or adjacent pills.
+- Removes duplicate native macOS `.help()` to eliminate conflicting OS-level hover popups.
+- Sets `.allowsHitTesting(false)` and elevates tooltips to the topmost presentation layer.
 
-### 6. Accurate Native Battery Guidance
-Updates the system-managed battery guidance text on macOS 27+ to:
-`"Set charging limits in macOS system settings - 80% charge limit recommended for battery health"`.
+### 5. Thermal Posture Re-anchoring
+In the Fan Control Strategy card, the top position is assigned to the safety system, **Thermal Posture**:
+- Directly surfaces the active policy pills: **Off**, **Fan Boost**, and **Throttle CPU**.
+- Non-occluding tooltips appear above or below with guaranteed clearance, preserving full clickability of the pills.
 
 ## Consequences
 
 ### Positive
-- **High Information Density with Zero Clutter:** Icon-only buttons save vertical and horizontal space while 200ms tooltips provide instant discoverability.
-- **Logical Domain Cohesion:** The Compute Governor is unified with memory reclamation and daemon suppression.
-- **Immediate Thermal Visibility:** Thermal Posture sits immediately above fan curves, clarifying system failsafe boundaries.
-- **Rapid Navigation:** Presets are accessible from the persistent header without scrolling.
+- **Zero Click Blocking:** Tooltips never overlap their trigger elements or neighboring toggles.
+- **Consistent Action Row:** Always-On, Boost Memory, and Fan Presets share identical dimensions and visual weight.
+- **De-cluttered Governor:** Governor toggle is compact, clean, and positioned directly below Boost Memory without distracting label text.
+- **Clean Header:** The top header is reserved for app identity and privileged daemon connectivity status.
 
 ### Negative / Trade-offs
-- The 513pt popover width consumes more desktop screen space. It remains within standard bounds for Apple Silicon displays.
+- The 40x40pt uniform buttons require careful spacing across the horizontal row. (513pt window width accommodates this comfortably).

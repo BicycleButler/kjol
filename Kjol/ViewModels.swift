@@ -118,6 +118,8 @@ final class FanControlViewModel: ObservableObject {
     var onPresetChange: ((SystemPreset) -> Void)?
 
     private var debounceWorkItem: DispatchWorkItem?
+    private var lastUserMutationTime: Date = Date.distantPast
+    private var activeEditingTemps: Set<Int> = []
 
     private let defaultsKeySubProfile = "kjol.fan.adaptiveSubProfile"
     private let defaultsKeyAnchors = "kjol.fan.customCurveAnchors"
@@ -176,18 +178,21 @@ final class FanControlViewModel: ObservableObject {
             if customPercent != pct { customPercent = pct }
         }
         if let pts = curvePoints, pts.count >= 8, profile == .adaptive && adaptiveSubProfile == .custom {
-            var newAnchors: [CurveMilestone] = []
-            let labels = ["Cool", "Warm", "Hot", "Max"]
-            var i = 0
-            var idx = 0
-            while i + 1 < pts.count && idx < 4 {
-                let lbl = idx < labels.count ? labels[idx] : "Zone \(idx+1)"
-                newAnchors.append(CurveMilestone(temp: pts[i], rpmPercent: pts[i + 1], label: lbl))
-                i += 2
-                idx += 1
-            }
-            if newAnchors.count == 4 && newAnchors != customCurveAnchors {
-                customCurveAnchors = newAnchors
+            let inGraceWindow = Date().timeIntervalSince(lastUserMutationTime) < 3.0 || !activeEditingTemps.isEmpty
+            if !inGraceWindow {
+                var newAnchors: [CurveMilestone] = []
+                let labels = ["Cool", "Warm", "Hot", "Max"]
+                var i = 0
+                var idx = 0
+                while i + 1 < pts.count && idx < 4 {
+                    let lbl = idx < labels.count ? labels[idx] : "Zone \(idx+1)"
+                    newAnchors.append(CurveMilestone(temp: pts[i], rpmPercent: pts[i + 1], label: lbl))
+                    i += 2
+                    idx += 1
+                }
+                if newAnchors.count == 4 && newAnchors != customCurveAnchors {
+                    customCurveAnchors = newAnchors
+                }
             }
         }
 
@@ -261,6 +266,7 @@ final class FanControlViewModel: ObservableObject {
         systemPreset = .none
         let snapped = round(pct / 5.0) * 5.0
         customPercent = snapped
+        lastUserMutationTime = Date()
 
         debounceWorkItem?.cancel()
         if immediate {
@@ -275,20 +281,59 @@ final class FanControlViewModel: ObservableObject {
         }
     }
 
+    func anchorRPM(for temp: Double) -> Double {
+        customCurveAnchors.first(where: { Int($0.temp) == Int(temp) })?.rpmPercent ?? 50.0
+    }
+
+    func anchorBinding(for temp: Double) -> Binding<Double> {
+        Binding<Double>(
+            get: { [weak self] in
+                self?.anchorRPM(for: temp) ?? 50.0
+            },
+            set: { [weak self] newValue in
+                guard let self = self else { return }
+                self.systemPreset = .none
+                self.lastUserMutationTime = Date()
+                self.activeEditingTemps.insert(Int(temp))
+                guard let idx = self.customCurveAnchors.firstIndex(where: { Int($0.temp) == Int(temp) }) else { return }
+                let clamped = max(0, min(100, round(newValue / 5.0) * 5.0))
+                if self.customCurveAnchors[idx].rpmPercent != clamped {
+                    self.customCurveAnchors[idx].rpmPercent = clamped
+                }
+            }
+        )
+    }
+
+    func commitCurveAnchor(temp: Double) {
+        systemPreset = .none
+        activeEditingTemps.remove(Int(temp))
+        lastUserMutationTime = Date()
+        if let data = try? JSONEncoder().encode(customCurveAnchors) {
+            UserDefaults.standard.set(data, forKey: defaultsKeyAnchors)
+        }
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
+        notifyChange()
+    }
+
     func updateCurveAnchorRPM(temp: Double, rpm: Double, immediate: Bool = false) {
         systemPreset = .none
         guard let idx = customCurveAnchors.firstIndex(where: { Int($0.temp) == Int(temp) }) else { return }
         let clamped = max(0, min(100, round(rpm / 5.0) * 5.0))
         customCurveAnchors[idx].rpmPercent = clamped
+        lastUserMutationTime = Date()
         if let data = try? JSONEncoder().encode(customCurveAnchors) {
             UserDefaults.standard.set(data, forKey: defaultsKeyAnchors)
         }
         debounceWorkItem?.cancel()
         if immediate {
             debounceWorkItem = nil
+            activeEditingTemps.remove(Int(temp))
             notifyChange()
         } else {
+            activeEditingTemps.insert(Int(temp))
             let workItem = DispatchWorkItem { [weak self] in
+                self?.activeEditingTemps.remove(Int(temp))
                 self?.notifyChange()
             }
             debounceWorkItem = workItem
@@ -297,6 +342,8 @@ final class FanControlViewModel: ObservableObject {
     }
 
     func resetCurveToRecommended() {
+        activeEditingTemps.removeAll()
+        lastUserMutationTime = Date()
         customCurveAnchors = [
             CurveMilestone(temp: 45, rpmPercent: 20, label: "Cool"),
             CurveMilestone(temp: 60, rpmPercent: 35, label: "Warm"),
@@ -306,6 +353,8 @@ final class FanControlViewModel: ObservableObject {
         if let data = try? JSONEncoder().encode(customCurveAnchors) {
             UserDefaults.standard.set(data, forKey: defaultsKeyAnchors)
         }
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
         notifyChange()
     }
 

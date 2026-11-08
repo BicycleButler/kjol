@@ -37,5 +37,5 @@ Define two distinct collections in `KjolHelper/main.swift`:
   - Critical battery ($\le 8\%$ on unplugged battery) automatically resumes daemons for safe sleep.
   - Extreme junction temperature ($\ge 105^\circ\text{C}$) auto-resumes daemons to prevent hardware damage.
 - Report `daemons_safety_ceiling_enabled` and `daemons_failsafe_reason` in `hostStatusDict` to render context-aware status in the menu bar.
-- Re-anchor the Governor toggle in the UI directly underneath the "Boost Memory" button in the Quick Actions bar (removing it from the Battery Management card) for strict functional cohesion.
+- Re-anchor the Governor toggle in the UI directly underneath the "Boost Memory" button in the unified Action Strip as a minimalist toggle switch (zero text beside it) for strict functional cohesion, accompanied by a non-occluding contextual tooltip.
 

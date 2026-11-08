@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 import Combine
 import ServiceManagement
+import Darwin
 
 enum Design {
     enum Spacing {
@@ -47,69 +48,158 @@ enum TooltipPlacement {
     case bottom
 }
 
+final class TooltipCoordinator: ObservableObject {
+    @Published var activeTooltip: TooltipData? = nil
+    private var pendingWorkItem: DispatchWorkItem?
+
+    struct TooltipData: Equatable {
+        let title: String
+        let description: String
+        let targetFrame: CGRect
+        let placement: TooltipPlacement
+    }
+
+    func show(title: String, description: String, frame: CGRect, placement: TooltipPlacement, delay: Double = 0.2) {
+        pendingWorkItem?.cancel()
+        let effectiveDelay = activeTooltip != nil ? 0.05 : delay
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            withAnimation(.easeInOut(duration: 0.12)) {
+                self.activeTooltip = TooltipData(
+                    title: title,
+                    description: description,
+                    targetFrame: frame,
+                    placement: placement
+                )
+            }
+        }
+        pendingWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + effectiveDelay, execute: item)
+    }
+
+    func hide() {
+        pendingWorkItem?.cancel()
+        pendingWorkItem = nil
+        if activeTooltip != nil {
+            withAnimation(.easeInOut(duration: 0.08)) {
+                activeTooltip = nil
+            }
+        }
+    }
+}
+
+struct TooltipFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
+        }
+    }
+}
+
+struct TooltipBubbleSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
+        }
+    }
+}
+
+struct ActiveTooltipOverlay: View {
+    let tooltip: TooltipCoordinator.TooltipData
+    @State private var bubbleSize: CGSize = CGSize(width: 180, height: 42)
+
+    var body: some View {
+        guard tooltip.targetFrame.width > 0 && tooltip.targetFrame.height > 0 else {
+            return AnyView(EmptyView())
+        }
+
+        let isTop = tooltip.placement == .top ||
+            (tooltip.targetFrame.maxY + bubbleSize.height + 12 > 570 && tooltip.targetFrame.minY > bubbleSize.height + 12)
+        let targetMidX = tooltip.targetFrame.midX
+        // Clamp X so bubble stays strictly within the 513pt window with 8pt margin
+        let clampedX = min(max(targetMidX - bubbleSize.width / 2, 8), 505 - bubbleSize.width)
+        let computedY = isTop
+            ? (tooltip.targetFrame.minY - bubbleSize.height - 6)
+            : (tooltip.targetFrame.maxY + 6)
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tooltip.title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(SwiftUI.Color.white)
+                if !tooltip.description.isEmpty {
+                    Text(tooltip.description)
+                        .font(.system(size: 9.5, weight: .regular))
+                        .foregroundStyle(SwiftUI.Color.white.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: 240, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(SwiftUI.Color(NSColor.black).opacity(0.94))
+                    .shadow(color: SwiftUI.Color.black.opacity(0.35), radius: 6, x: 0, y: 3)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(SwiftUI.Color.white.opacity(0.2), lineWidth: 0.5)
+            )
+            .background(
+                GeometryReader { geo in
+                    SwiftUI.Color.clear
+                        .preference(key: TooltipBubbleSizeKey.self, value: geo.size)
+                }
+            )
+            .onPreferenceChange(TooltipBubbleSizeKey.self) { newSize in
+                if newSize.width > 0 && newSize.height > 0 {
+                    self.bubbleSize = newSize
+                }
+            }
+            .offset(x: clampedX, y: max(6, computedY))
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        )
+    }
+}
+
 struct KjolTooltipModifier: ViewModifier {
     let title: String
     let description: String
     var placement: TooltipPlacement = .bottom
     var delay: Double = 0.2
 
-    @State private var isHovered: Bool = false
-    @State private var showTooltip: Bool = false
-    @State private var hoverWorkItem: DispatchWorkItem?
+    @EnvironmentObject private var tooltipCoordinator: TooltipCoordinator
+    @State private var globalFrame: CGRect = .zero
 
     func body(content: Content) -> some View {
         content
+            .background(
+                GeometryReader { geo in
+                    SwiftUI.Color.clear
+                        .preference(key: TooltipFramePreferenceKey.self, value: geo.frame(in: .named("kjolWindowSpace")))
+                }
+            )
+            .onPreferenceChange(TooltipFramePreferenceKey.self) { frame in
+                self.globalFrame = frame
+            }
             .onHover { hovering in
-                isHovered = hovering
-                hoverWorkItem?.cancel()
                 if hovering {
-                    let item = DispatchWorkItem {
-                        if self.isHovered {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                self.showTooltip = true
-                            }
-                        }
-                    }
-                    hoverWorkItem = item
-                    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+                    tooltipCoordinator.show(
+                        title: title,
+                        description: description,
+                        frame: globalFrame,
+                        placement: placement,
+                        delay: delay
+                    )
                 } else {
-                    withAnimation(.easeInOut(duration: 0.1)) {
-                        self.showTooltip = false
-                    }
+                    tooltipCoordinator.hide()
                 }
             }
-            .overlay(alignment: placement == .bottom ? .bottom : .top) {
-                if showTooltip {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(SwiftUI.Color.white)
-                        if !description.isEmpty {
-                            Text(description)
-                                .font(.system(size: 9.5, weight: .regular))
-                                .foregroundStyle(SwiftUI.Color.white.opacity(0.88))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: 260, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(SwiftUI.Color(NSColor.black).opacity(0.92))
-                            .shadow(color: SwiftUI.Color.black.opacity(0.3), radius: 6, x: 0, y: 3)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(SwiftUI.Color.white.opacity(0.18), lineWidth: 0.5)
-                    )
-                    .offset(y: placement == .bottom ? 34 : -34)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                    .zIndex(9999)
-                    .allowsHitTesting(false)
-                }
-            }
-            .help(description.isEmpty ? title : "\(title): \(description)")
     }
 }
 
@@ -340,11 +430,6 @@ struct HeaderView: View {
 
             Spacer(minLength: 8)
 
-            // Center-Right: Three-option Preset Toggle Bar with Fan Icon on Left
-            headerPresetToggleBar
-
-            Spacer(minLength: 8)
-
             // Right: Busy Indicator & Helper Status Badge
             if host.busy {
                 ProgressView()
@@ -366,79 +451,6 @@ struct HeaderView: View {
                         : "Kjol requires the background daemon for privileged hardware operations. Please run the installer package."
                 )
         }
-    }
-
-    private var headerPresetToggleBar: some View {
-        HStack(spacing: 6) {
-            // Fan icon always in color on the left of the toggle bar
-            Image(systemName: "fanblades.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Design.Color.accent)
-                .kjolTooltip(
-                    title: "Cooling Presets",
-                    description: "Select system-wide acoustic and thermal performance preset"
-                )
-
-            // Segmented toggle bar with three icons in strict order: gentle, custom, max compute
-            HStack(spacing: 2) {
-                headerPresetSegment(
-                    preset: .gentle,
-                    icon: "leaf.fill",
-                    title: "Gentle Silent",
-                    tooltip: "Low Power Mode • Whisper-quiet fans (<25%) • <75°C target"
-                )
-                headerPresetSegment(
-                    preset: .none, // Custom
-                    icon: "slider.horizontal.3",
-                    title: "Custom",
-                    tooltip: "Manual / Custom thermal curves and user-defined fan targets"
-                )
-                headerPresetSegment(
-                    preset: .maxCompute,
-                    icon: "bolt.fill",
-                    title: "Max Compute",
-                    tooltip: "Full Turbo compute • Active thermal acceleration & dynamic cooling"
-                )
-            }
-            .padding(2)
-            .background(Design.Color.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(SwiftUI.Color.primary.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(Design.Color.cardBackground.opacity(0.9), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(SwiftUI.Color.primary.opacity(0.06), lineWidth: 1)
-        )
-    }
-
-    private func headerPresetSegment(preset: SystemPreset, icon: String, title: String, tooltip: String) -> some View {
-        let isSelected = host.fanControlVM.systemPreset == preset
-        return Button(action: {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                host.fanControlVM.selectSystemPreset(preset)
-            }
-        }) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                .frame(width: 24, height: 18)
-                .background(
-                    isSelected ? Design.Color.accent.opacity(0.25) : SwiftUI.Color.clear,
-                    in: RoundedRectangle(cornerRadius: 4, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(isSelected ? Design.Color.accent.opacity(0.8) : SwiftUI.Color.clear, lineWidth: 1)
-                )
-                .foregroundStyle(isSelected ? Design.Color.accent : Design.Color.secondaryText)
-        }
-        .buttonStyle(.plain)
-        .disabled(host.busy)
-        .kjolTooltip(title: title, description: tooltip)
     }
 }
 
@@ -514,29 +526,29 @@ struct QuickActionsBarView: View {
     @ObservedObject var powerVM: PowerViewModel
     @ObservedObject var host: Host
 
+    private let buttonSize: CGFloat = 40
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             // 1. Always-On Compact Icon Button
             Button(action: {
                 powerVM.toggleAlwaysOn(!powerVM.alwaysOn)
             }) {
-                VStack {
-                    Image(systemName: powerVM.alwaysOn ? "cup.and.saucer.fill" : "cup.and.saucer")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(powerVM.alwaysOn ? Design.Color.accent : Design.Color.secondaryText)
-                }
-                .frame(width: 44, height: 44)
-                .background(
-                    powerVM.alwaysOn ? Design.Color.accent.opacity(0.18) : Design.Color.cardBackground,
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(
-                            powerVM.alwaysOn ? Design.Color.accent.opacity(0.65) : SwiftUI.Color.primary.opacity(0.08),
-                            lineWidth: 1
-                        )
-                )
+                Image(systemName: powerVM.alwaysOn ? "cup.and.saucer.fill" : "cup.and.saucer")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(powerVM.alwaysOn ? Design.Color.accent : Design.Color.secondaryText)
+                    .frame(width: buttonSize, height: buttonSize)
+                    .background(
+                        powerVM.alwaysOn ? Design.Color.accent.opacity(0.18) : Design.Color.cardBackground,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(
+                                powerVM.alwaysOn ? Design.Color.accent.opacity(0.65) : SwiftUI.Color.primary.opacity(0.08),
+                                lineWidth: 1
+                            )
+                    )
             }
             .buttonStyle(.plain)
             .disabled(host.busy)
@@ -545,18 +557,15 @@ struct QuickActionsBarView: View {
                 description: "Prevents system sleep and maintains compute and clamshell operation when the lid is closed."
             )
 
-            // 2. Boost Memory Compact Icon Button & Governor Sub-Control
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Button(action: {
-                        powerVM.toggleDaemons(!powerVM.daemonsSuspended)
-                    }) {
-                        VStack {
-                            Image(systemName: powerVM.daemonsSuspended ? "bolt.badge.automatic.fill" : "bolt.badge.automatic")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(powerVM.daemonsSuspended ? Design.Color.accent : Design.Color.secondaryText)
-                        }
-                        .frame(width: 44, height: 44)
+            // 2. Boost Memory Compact Icon Button & Minimalist Governor Sub-Control
+            VStack(spacing: 4) {
+                Button(action: {
+                    powerVM.toggleDaemons(!powerVM.daemonsSuspended)
+                }) {
+                    Image(systemName: powerVM.daemonsSuspended ? "bolt.badge.automatic.fill" : "bolt.badge.automatic")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(powerVM.daemonsSuspended ? Design.Color.accent : Design.Color.secondaryText)
+                        .frame(width: buttonSize, height: buttonSize)
                         .background(
                             powerVM.daemonsSuspended ? Design.Color.accent.opacity(0.18) : Design.Color.cardBackground,
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -568,35 +577,32 @@ struct QuickActionsBarView: View {
                                     lineWidth: 1
                                 )
                         )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(host.busy)
-                    .kjolTooltip(
-                        title: "Boost Memory",
-                        description: "Suspends non-critical background daemons, demotes indexing, and purges RAM buffers to maximize available compute."
-                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(host.busy)
+                .kjolTooltip(
+                    title: "Boost Memory",
+                    description: "Suspends non-critical background daemons, demotes indexing, and purges RAM buffers to maximize available compute."
+                )
 
-                    // Safety Failsafe Alert (if triggered)
+                // Minimalist Governor Toggle placed directly below Memory Boost button (no text beside it)
+                HStack(spacing: 2) {
+                    Toggle("", isOn: Binding(
+                        get: { powerVM.daemonsSafetyCeilingEnabled },
+                        set: { powerVM.toggleDaemonsSafetyCeiling($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .disabled(host.busy)
+
                     if powerVM.daemonsFailsafeTriggered && !powerVM.daemonsSuspended {
                         Button(action: {
                             powerVM.toggleDaemons(true)
                         }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(Design.Color.warning)
-                                let reason = powerVM.daemonsFailsafeReason == "critical_battery"
-                                    ? "Paused (battery <=8%)"
-                                    : (powerVM.daemonsFailsafeReason == "thermal_critical"
-                                        ? "Paused (heat >=105°C)"
-                                        : "Paused (4h safety limit)")
-                                Text(reason)
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(Design.Color.warning)
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
-                            .background(Design.Color.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Design.Color.warning)
                         }
                         .buttonStyle(.plain)
                         .kjolTooltip(
@@ -605,36 +611,85 @@ struct QuickActionsBarView: View {
                         )
                     }
                 }
-
-                // Toggle for governor directly underneath Boost Memory button
-                HStack(spacing: 5) {
-                    Image(systemName: powerVM.daemonsSafetyCeilingEnabled ? "timer" : "infinity")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(powerVM.daemonsSuspended ? Design.Color.accent : Design.Color.tertiaryText)
-                    Text(powerVM.daemonsSafetyCeilingEnabled ? "Governor: 4h Limit" : "Governor: Persistent")
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Design.Color.secondaryText)
-                    Toggle("", isOn: Binding(
-                        get: { powerVM.daemonsSafetyCeilingEnabled },
-                        set: { powerVM.toggleDaemonsSafetyCeiling($0) }
-                    ))
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .disabled(host.busy)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Design.Color.cardBackground.opacity(0.7), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .frame(width: buttonSize)
                 .kjolTooltip(
-                    title: "Compute Governor Mode",
+                    title: powerVM.daemonsSafetyCeilingEnabled ? "Compute Governor: 4h Limit" : "Compute Governor: Persistent Mode",
                     description: powerVM.daemonsSafetyCeilingEnabled
-                        ? "4h Limit: Automatically resumes background indexing after 4 hours to avoid task backlogs."
+                        ? "4-hour safety ceiling: Automatically resumes background indexing after 4 hours to avoid task backlogs."
                         : "Persistent Mode: Keeps memory and compute optimizations active indefinitely across multi-day tasks until toggled off."
                 )
             }
 
+            // Subtle vertical separator
+            Rectangle()
+                .fill(SwiftUI.Color.primary.opacity(0.08))
+                .frame(width: 1, height: buttonSize)
+                .padding(.horizontal, 4)
+
+            // 3. Fan Settings Bar (in the same row, same button size)
+            HStack(spacing: 8) {
+                Image(systemName: "fanblades.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Design.Color.accent)
+                    .frame(height: buttonSize)
+                    .kjolTooltip(
+                        title: "Cooling Presets",
+                        description: "Select system-wide acoustic and thermal performance preset"
+                    )
+
+                HStack(spacing: 6) {
+                    fanPresetButton(
+                        preset: .gentle,
+                        icon: "leaf.fill",
+                        title: "Gentle Silent",
+                        tooltip: "Low Power Mode • Whisper-quiet fans (<25%) • <75°C target"
+                    )
+                    fanPresetButton(
+                        preset: .none, // Custom
+                        icon: "slider.horizontal.3",
+                        title: "Custom",
+                        tooltip: "Manual / Custom thermal curves and user-defined fan targets"
+                    )
+                    fanPresetButton(
+                        preset: .maxCompute,
+                        icon: "bolt.fill",
+                        title: "Max Compute",
+                        tooltip: "Full Turbo compute • Active thermal acceleration & dynamic cooling"
+                    )
+                }
+            }
+            .padding(.horizontal, 4)
+
             Spacer()
         }
+    }
+
+    private func fanPresetButton(preset: SystemPreset, icon: String, title: String, tooltip: String) -> some View {
+        let isSelected = host.fanControlVM.systemPreset == preset
+        return Button(action: {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                host.fanControlVM.selectSystemPreset(preset)
+            }
+        }) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: isSelected ? .bold : .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .background(
+                    isSelected ? Design.Color.accent.opacity(0.18) : Design.Color.cardBackground,
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(
+                            isSelected ? Design.Color.accent.opacity(0.65) : SwiftUI.Color.primary.opacity(0.08),
+                            lineWidth: 1
+                        )
+                )
+                .foregroundStyle(isSelected ? Design.Color.accent : Design.Color.secondaryText)
+        }
+        .buttonStyle(.plain)
+        .disabled(host.busy)
+        .kjolTooltip(title: title, description: tooltip)
     }
 }
 
@@ -940,7 +995,7 @@ struct FanControlCardView: View {
                             CustomCurveEditorView(
                                 fanVM: fanVM,
                                 currentTemp: effectiveTemp,
-                                disabled: host.busy
+                                disabled: !host.helperInstalled
                             )
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         } else {
@@ -980,7 +1035,7 @@ struct FanControlCardView: View {
                                 }
                             }
                         )
-                        .disabled(host.busy)
+                        .disabled(!host.helperInstalled)
                         .kjolTooltip(
                             title: "Fixed Fan Target",
                             description: "Manually locks all fans to this target percentage speed."
@@ -1114,7 +1169,7 @@ struct FanControlCardView: View {
                         in: 70...100,
                         step: 5
                     )
-                    .disabled(host.busy)
+                    .disabled(!host.helperInstalled)
                     .kjolTooltip(
                         title: "Threshold Temperature",
                         description: "Temperature at which the selected thermal posture policy engages (\(Int(fanVM.thermalCeilingTemp))°C)."
@@ -1158,7 +1213,7 @@ struct FanControlCardView: View {
         }
         .buttonStyle(.plain)
         .disabled(host.busy)
-        .kjolTooltip(title: tipTitle, description: tipDesc)
+        .kjolTooltip(title: tipTitle, description: tipDesc, placement: .top)
     }
 
     private func fanProfileSegment(_ profile: FanProfile) -> some View {
@@ -1202,7 +1257,7 @@ struct FanControlCardView: View {
         }
         .buttonStyle(.plain)
         .disabled(host.busy)
-        .kjolTooltip(title: tipTitle, description: tipDesc)
+        .kjolTooltip(title: tipTitle, description: tipDesc, placement: .top)
     }
 
     private func adaptiveSubProfilePill(_ sub: AdaptiveSubProfile) -> some View {
@@ -1243,7 +1298,7 @@ struct FanControlCardView: View {
         }
         .buttonStyle(.plain)
         .disabled(host.busy)
-        .kjolTooltip(title: tipTitle, description: tipDesc)
+        .kjolTooltip(title: tipTitle, description: tipDesc, placement: .top)
     }
 
     private func adaptivePresetCard(_ sub: AdaptiveSubProfile) -> some View {
@@ -1541,7 +1596,8 @@ struct CustomCurveEditorView: View {
     }
 
     private func milestoneSliderRow(_ anchor: CurveMilestone) -> some View {
-        HStack(spacing: 6) {
+        let liveRPM = fanVM.anchorRPM(for: anchor.temp)
+        return HStack(spacing: 6) {
             // Milestone label & temp badge
             HStack(spacing: 3) {
                 Text("\(Int(anchor.temp))°C")
@@ -1554,25 +1610,22 @@ struct CustomCurveEditorView: View {
             .frame(width: 80, alignment: .leading)
 
             Slider(
-                value: Binding(
-                    get: { anchor.rpmPercent },
-                    set: { fanVM.updateCurveAnchorRPM(temp: anchor.temp, rpm: $0) }
-                ),
+                value: fanVM.anchorBinding(for: anchor.temp),
                 in: 0...100,
                 step: 5,
                 onEditingChanged: { editing in
                     if !editing {
-                        fanVM.updateCurveAnchorRPM(temp: anchor.temp, rpm: anchor.rpmPercent, immediate: true)
+                        fanVM.commitCurveAnchor(temp: anchor.temp)
                     }
                 }
             )
             .disabled(disabled)
             .kjolTooltip(
                 title: "\(anchor.label) Anchor (\(Int(anchor.temp))°C)",
-                description: "Target fan speed of \(Int(anchor.rpmPercent))% when junction temperature reaches \(Int(anchor.temp))°C."
+                description: "Target fan speed of \(Int(liveRPM))% when junction temperature reaches \(Int(anchor.temp))°C."
             )
 
-            Text("\(Int(anchor.rpmPercent))%")
+            Text("\(Int(liveRPM))%")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(Design.Color.accent)
                 .frame(width: 32, alignment: .trailing)
@@ -2175,29 +2228,40 @@ struct FooterView: View {
 
 struct KjolView: View {
     @EnvironmentObject var host: Host
+    @StateObject private var tooltipCoordinator = TooltipCoordinator()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.space3) {
-            HeaderView(host: host)
-            QuickActionsBarView(powerVM: host.powerVM, host: host)
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: Design.Spacing.space3) {
-                    TelemetryCardView(telemetryVM: host.telemetryVM)
-                    if !host.helperInstalled {
-                        HelperMissingCardView(host: host)
-                    } else {
-                        FanControlCardView(fanVM: host.fanControlVM, telemetryVM: host.telemetryVM, host: host)
-                        PowerBatteryCardView(powerVM: host.powerVM, telemetryVM: host.telemetryVM, host: host)
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: Design.Spacing.space3) {
+                HeaderView(host: host)
+                QuickActionsBarView(powerVM: host.powerVM, host: host)
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: Design.Spacing.space3) {
+                        TelemetryCardView(telemetryVM: host.telemetryVM)
+                        if !host.helperInstalled {
+                            HelperMissingCardView(host: host)
+                        } else {
+                            FanControlCardView(fanVM: host.fanControlVM, telemetryVM: host.telemetryVM, host: host)
+                            PowerBatteryCardView(powerVM: host.powerVM, telemetryVM: host.telemetryVM, host: host)
+                        }
+                        UpdateBannerView(updateVM: host.updateVM)
                     }
-                    UpdateBannerView(updateVM: host.updateVM)
+                    .padding(.bottom, 2)
                 }
-                .padding(.bottom, 2)
+                FooterView(host: host, updateVM: host.updateVM)
             }
-            FooterView(host: host, updateVM: host.updateVM)
+            .padding(Design.Spacing.space4)
+
+            if let tip = tooltipCoordinator.activeTooltip {
+                ActiveTooltipOverlay(tooltip: tip)
+                    .allowsHitTesting(false)
+                    .zIndex(999999)
+            }
         }
-        .padding(Design.Spacing.space4)
+        .coordinateSpace(name: "kjolWindowSpace")
         .frame(width: 513, height: 580)
         .background(Design.Color.background)
+        .environmentObject(tooltipCoordinator)
     }
 }
 
@@ -2218,15 +2282,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         didSet { updatePolling() }
     }
     private var cancellables = Set<AnyCancellable>()
+    private var cachedStatusIcon: NSImage?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     private func loadStatusItemImage() -> NSImage {
+        if let cached = cachedStatusIcon {
+            return cached
+        }
         if let img = loadBundleNSImage("KjolStatusIcon.png") ?? loadBundleNSImage("KjolStatusIcon") {
             img.size = NSSize(width: 18, height: 18)
             img.isTemplate = true
+            cachedStatusIcon = img
             return img
         }
         let fallback = NSImage(systemSymbolName: "bolt", accessibilityDescription: "Kjol") ?? NSImage()
         fallback.isTemplate = true
+        cachedStatusIcon = fallback
         return fallback
     }
 
@@ -2255,6 +2326,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private func setupMemoryPressureMonitoring() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: DispatchQueue.main)
+        source.setEventHandler {
+            autoreleasepool {
+                _ = malloc_zone_pressure_relief(nil, 0)
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
@@ -2275,6 +2357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             btn.target = self
         }
 
+        setupMemoryPressureMonitoring()
         updateStatusItemIcon()
         let scheduleIconUpdate: (Any) -> Void = { [weak self] _ in
             DispatchQueue.main.async {
@@ -2312,13 +2395,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return p
     }
 
+    private func teardownPopover() {
+        guard let pop = popover else { return }
+        popover = nil
+        pop.close()
+        pop.contentViewController = nil
+        autoreleasepool {
+            _ = malloc_zone_pressure_relief(nil, 0)
+        }
+    }
+
     @objc func togglePopover(_ sender: Any?) {
         if let pop = popover, pop.isShown {
             pop.performClose(nil)
             popoverShown = false
+            teardownPopover()
             return
         }
-        let pop = popover ?? buildPopover()
+        let pop = buildPopover()
         popover = pop
         if let btn = statusItem.button {
             pop.show(relativeTo: btn.bounds, of: btn, preferredEdge: .minY)
@@ -2331,9 +2425,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         popoverShown = false
+        teardownPopover()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
+        teardownPopover()
         if host.powerVM.alwaysOn {
             host.syncSetAlwaysOn(false)
         }
