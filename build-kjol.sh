@@ -53,6 +53,7 @@ swiftc -O \
     $SDK_FLAG \
     $CACHE_FLAGS \
     -framework IOKit \
+    -framework CoreGraphics \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$PROJECT_DIR/KjolHelper/Info.plist" \
     "$PROJECT_DIR/KjolHelper/main.swift" \
     "$PROJECT_DIR/KjolHelper/SMC.swift" \
@@ -127,6 +128,11 @@ chmod 755 "$DST_BIN"
 chown root:wheel "$DST_PLIST"
 chmod 644 "$DST_PLIST"
 chmod 700 "$STATE_DIR"
+
+# Clean up legacy caffeinate LaunchDaemon if present
+launchctl bootout system/com.lappier.kjol.caffeinate 2>/dev/null || true
+launchctl disable system/com.lappier.kjol.caffeinate 2>/dev/null || true
+rm -f /Library/LaunchDaemons/com.lappier.kjol.caffeinate.plist
 
 # Unregister any existing daemon instance and bootstrap fresh
 launchctl bootout "system/$HELPER_LABEL" 2>/dev/null || true

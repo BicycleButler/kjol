@@ -4,6 +4,7 @@ import IOKit
 import IOKit.ps
 import IOKit.pwr_mgt
 import Security
+import CoreGraphics
 
 private let kIOMsgCommon: UInt32 = 0x38 << 26
 private let kMsgCanSleep = kIOMsgCommon | 0x270
@@ -670,6 +671,8 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
     }
 
     private func cleanupOrphanedCaffeinate() {
+        shell(["/bin/launchctl", "bootout", "system/com.lappier.kjol.caffeinate"])
+        try? FileManager.default.removeItem(atPath: "/Library/LaunchDaemons/com.lappier.kjol.caffeinate.plist")
         shell(["/usr/bin/pkill", "-x", "caffeinate"])
     }
 
@@ -690,16 +693,35 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
     }
 
     func isExternalDisplayConnected() -> Bool {
+        var count: UInt32 = 0
+        if CGGetOnlineDisplayList(0, nil, &count) == .success && count > 0 {
+            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            if CGGetOnlineDisplayList(count, &displays, &count) == .success {
+                for d in displays {
+                    if CGDisplayIsBuiltin(d) == 0 {
+                        return true
+                    }
+                }
+                return false
+            }
+        }
+
+        // Fallback to IOKit if WindowServer / CoreGraphics is not yet accessible
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
         guard service != 0 else { return false }
         defer { IOObjectRelease(service) }
 
-        if let prop = IORegistryEntryCreateCFProperty(service, "AppleClamshellCausesSleep" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() {
-            if let boolVal = prop as? Bool {
-                return !boolVal
-            }
-            if let numVal = prop as? NSNumber {
-                return !numVal.boolValue
+        // In IOPMrootDomain, AppleClamshellCausesSleep can be false if sleep is disabled via pmset,
+        // so we only trust it if sleep is NOT disabled.
+        let sleepDisabled = readState("always_on") == "1"
+        if !sleepDisabled {
+            if let prop = IORegistryEntryCreateCFProperty(service, "AppleClamshellCausesSleep" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() {
+                if let boolVal = prop as? Bool {
+                    return !boolVal
+                }
+                if let numVal = prop as? NSNumber {
+                    return !numVal.boolValue
+                }
             }
         }
         return false
@@ -714,9 +736,11 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
                 if !isExternalDisplayConnected() {
                     fputs("KjolHelper: Clamshell lid closed with Always-On active -> sleeping display\n", stderr)
                     runPmset(["displaysleepnow"])
+                    runPmset(["-a", "displaysleep", "1"])
                 }
             } else {
                 fputs("KjolHelper: Clamshell lid opened with Always-On active -> waking display\n", stderr)
+                runPmset(["-a", "displaysleep", "10"])
                 shell(["/usr/bin/caffeinate", "-u", "-t", "1"])
             }
         }
@@ -748,7 +772,7 @@ final class KjolHelper: NSObject, KjolHelperProtocol, NSXPCListenerDelegate {
         cleanupOrphanedCaffeinate()
         stopClamshellWatchdog()
         if alwaysOnActive {
-            runPmset(["-a", "disablesleep", "0"])
+            runPmset(["-a", "disablesleep", "0", "displaysleep", "10"])
         }
     }
 

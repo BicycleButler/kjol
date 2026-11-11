@@ -4,8 +4,10 @@
 set -e
 
 HELPER_LABEL="com.lappier.kjol.helper"
+CAFFEINATE_LABEL="com.lappier.kjol.caffeinate"
 DST_BIN="/Library/PrivilegedHelperTools/$HELPER_LABEL"
 DST_PLIST="/Library/LaunchDaemons/$HELPER_LABEL.plist"
+CAFFEINATE_PLIST="/Library/LaunchDaemons/$CAFFEINATE_LABEL.plist"
 APP_DIR="/Applications/Kjol.app"
 STATE_DIR="/var/db/kjol"
 LOG_OUT="/var/log/kjol-helper.out.log"
@@ -23,15 +25,18 @@ echo "=== Uninstalling Kjol ==="
 echo "→ Closing Kjol application..."
 pkill -x "Kjol" 2>/dev/null || true
 
-# 2. Boot out and disable the LaunchDaemon
-echo "→ Stopping and unregistering privileged helper daemon..."
+# 2. Boot out and disable the LaunchDaemons
+echo "→ Stopping and unregistering privileged helper daemon and legacy daemons..."
 launchctl bootout "system/$HELPER_LABEL" 2>/dev/null || true
 launchctl disable "system/$HELPER_LABEL" 2>/dev/null || true
+launchctl bootout "system/$CAFFEINATE_LABEL" 2>/dev/null || true
+launchctl disable "system/$CAFFEINATE_LABEL" 2>/dev/null || true
 
 # 3. Remove privileged helper files
-echo "→ Removing helper binary and launchd plist..."
+echo "→ Removing helper binary and launchd plists..."
 rm -f "$DST_BIN"
 rm -f "$DST_PLIST"
+rm -f "$CAFFEINATE_PLIST"
 
 # 4. Remove state directory and helper logs
 echo "→ Cleaning up persistent state and logs..."

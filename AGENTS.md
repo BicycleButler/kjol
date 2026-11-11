@@ -152,7 +152,8 @@ Kjol features in-app auto-updates driven by GitHub Releases (`Wiltermoodj/kjol`)
 ## Technical Details
 
 ### Always-On (Lid Closed)
-- Spawns `caffeinate -u -i -s` from the root helper daemon.
+- Spawns `caffeinate -i -m` from the root helper daemon (avoids `-u` so internal display can sleep when the lid is closed).
+- Monitors lid state via `IOPMrootDomain` and checks online display list; triggers `displaysleepnow` and dynamic 1-minute display sleep while the clamshell is shut.
 - Configures power management through `pmset -a disablesleep 1 lowpowermode 0 powernap 0 sleep 0 displaysleep 10 disksleep 0 standby 0 hibernatemode 0 ttyskeepawake 1 lessbright 0`.
 - Preserves always-on state across helper restarts and reboots until toggled off (restoring `pmset -a disablesleep 0` upon deactivation).
 
